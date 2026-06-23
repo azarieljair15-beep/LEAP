@@ -1,0 +1,2974 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Frog Leap</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; touch-action:none; }
+html, body {
+  width:100%; height:100%; overflow:hidden;
+  /* Swamp gradient matches the game's background so side bars blend in */
+  background: radial-gradient(ellipse at 50% 40%, #0d1f0d 0%, #050e05 60%, #020508 100%);
+}
+body { display:flex; justify-content:center; align-items:center; }
+canvas {
+  display:block;
+  /* Fill full height, auto width preserves ratio — sides are "more swamp" */
+  height: 100vh;
+  width: auto;
+  max-width: 100vw;
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+
+// ╔══════════════════════════════════════════╗
+// ║  FROG LEAP — Swamp Edition v3           ║
+// ╚══════════════════════════════════════════╝
+const C = document.getElementById('c');
+const ctx = C.getContext('2d');
+const W = 480, H = 640;
+C.width = W; C.height = H;
+
+// ── Constants ────────────────────────────────
+let WIN = 30; // increases by 10 each win; endless after 100
+const GRAVITY    = 0.5;
+const PAD_BASE_Y = 460;
+const HORIZON    = 265;
+const WARN_T     = 1.8;
+const SINK_T     = 1.0;
+const TONGUE_MAX      = 145;
+const BALANCE_MAX_T   = 40;
+const JUMP_BOOST_DUR  = 7000;
+const SPEED_BOOST_DUR = 5000;
+const POW_MIN    = 5;
+const POW_RNG    = 9;
+const VX_RATIO   = 0.65;
+const TOD_SPEED  = 1 / (90 * 60);
+const WATER_Y    = PAD_BASE_Y + 42;
+
+// ── Skins ─────────────────────────────────────
+const SKINS = [
+  { id:'green',   label:'Green',   threshold:0,
+    body:'#4aaa28', head:'#4aaa28', belly:'#c5e642', leg:'#388018', arm:'#388018', eye:'#1a4208', ol:'#1a4208' },
+  { id:'blue',    label:'Blue',    threshold:20,
+    body:'#2060c8', head:'#2060c8', belly:'#90d0f8', leg:'#1448a0', arm:'#1448a0', eye:'#082858', ol:'#082858' },
+  { id:'yellow',  label:'Yellow',  threshold:50,
+    body:'#b89818', head:'#b89818', belly:'#f0e858', leg:'#887008', arm:'#887008', eye:'#403800', ol:'#403800' },
+  { id:'red',     label:'Red',     threshold:100,
+    body:'#c02818', head:'#c02818', belly:'#f89888', leg:'#881808', arm:'#881808', eye:'#380808', ol:'#380808' },
+  { id:'purple',  label:'Purple',  threshold:200,
+    body:'#7020b0', head:'#7020b0', belly:'#c888f0', leg:'#4e0890', arm:'#4e0890', eye:'#260050', ol:'#260050' },
+  { id:'pink',    label:'Pink',    threshold:400,
+    body:'#c82880', head:'#c82880', belly:'#f898d0', leg:'#a01868', arm:'#a01868', eye:'#480030', ol:'#480030' },
+  { id:'orange',  label:'Orange',  threshold:700,
+    body:'#c05010', head:'#c05010', belly:'#f8c070', leg:'#883808', arm:'#883808', eye:'#381808', ol:'#381808' },
+  { id:'rainbow', label:'Rainbow', threshold:1000,
+    body:null, head:null, belly:null, leg:null, arm:null, eye:null, ol:null },
+];
+
+// ── Accessories ───────────────────────────────
+const ACCESSORIES = [
+  { id:'glasses',    label:'Glasses',     cost:25  },
+  { id:'tophat',     label:'Top Hat',     cost:60  },
+  { id:'monocle',    label:'Monocle',     cost:90  },
+  { id:'crown',      label:'Crown',       cost:150 },
+  { id:'bowtie',     label:'Bow Tie',     cost:20  },
+  { id:'sunhat',     label:'Sun Hat',     cost:75  },
+  { id:'blush',      label:'Blush',       cost:30  },
+  { id:'roboticeye', label:'Robotic Eye', cost:120 },
+  { id:'smalleyes',  label:'Deep Eyes',   cost:50  },
+];
+
+// ── Trails ────────────────────────────────────
+const TRAILS = [
+  { id:'red',     label:'Red Trail',     cost:80  },
+  { id:'blue',    label:'Blue Trail',    cost:80  },
+  { id:'green',   label:'Green Trail',   cost:80  },
+  { id:'yellow',  label:'Yellow Trail',  cost:80  },
+  { id:'purple',  label:'Purple Trail',  cost:80  },
+  { id:'pink',    label:'Pink Trail',    cost:100 },
+  { id:'orange',  label:'Orange Trail',  cost:80  },
+  { id:'fire',    label:'Fire Trail',    cost:180 },
+  { id:'rainbow', label:'Rainbow Trail', cost:250 },
+];
+
+// ── Game State ────────────────────────────────
+let gs = 'menu', score = 0, best = 0, isNewBest = false;
+let frog, pads, parts, camX, curPad, frame = 0, holding, wv = 0;
+let bugs = [];
+let jumpBoostEnd = 0, speedBoostEnd = 0, padBoostEnd = 0;
+let cursorWX = 0, cursorWY = 0;
+let tod = 0.32;
+
+// ── Lives ─────────────────────────────────────
+let lives = 3;
+let invincibleUntil = 0;
+let lastDamageType = null;
+let frogOnIce = false;
+let secondChanceUsed = false; // only one second-chance buy per game
+let gamesWon = 0;       // total wins, drives WIN goal escalation
+let spawnGraceUntil = 0; // ms timestamp — damage ignored during grace
+let frozenDamageTimer = 0;
+
+// ── Events ────────────────────────────────────
+let currentEvent = null;
+let eventEndPad = 0;
+let nextEventPad = 8;
+let volcanoX = 0;
+let lavaBombs = [];
+let lavaSpawnTimer = 0;
+let snowParts = [];
+
+// ── Menu / Settings ───────────────────────────
+let menuPage = 'main';
+let menuQuoteIdx = 0;
+let sfxOn = true, ambienceOn = true;
+
+// ── Cosmetics / Currency ──────────────────────
+let equippedSkin = 'green';
+let equippedAccessory = null;
+let equippedTrail = null;
+let ownedAccessories = [];
+let ownedTrails = [];
+let lilyPadsTotal = 0, lilyPadsBalance = 0;
+let frogTrail = [];
+
+// ── Shop ──────────────────────────────────────
+let shopSection = 'cosmetics';
+let shopScrollCosm = 0;
+let shopScrollTrail = 0;
+
+// ── Death ─────────────────────────────────────
+let deathType = null;
+let deathFrame = 0;
+let waterHitSX = 0;
+let gameEndTime = 0;
+const RESTART_DELAY = 2500;
+const AUTO_MENU_DELAY = 12000;
+
+// ── Persistence ───────────────────────────────
+function saveProgress() {
+  try {
+    localStorage.setItem('frogLeap_v3', JSON.stringify({
+      best, lilyPadsTotal, lilyPadsBalance,
+      equippedSkin, equippedAccessory, equippedTrail,
+      ownedAccessories, ownedTrails, gamesWon, WIN
+    }));
+  } catch(e) {}
+}
+function loadProgress() {
+  try {
+    const src = localStorage.getItem('frogLeap_v3') || localStorage.getItem('frogLeap_v2') || '{}';
+    const d = JSON.parse(src);
+    if (d.best)              best = d.best;
+    if (d.lilyPadsTotal)     lilyPadsTotal = d.lilyPadsTotal;
+    if (d.lilyPadsBalance !== undefined) lilyPadsBalance = d.lilyPadsBalance;
+    if (d.equippedSkin)      equippedSkin = d.equippedSkin;
+    if (d.equippedAccessory !== undefined) equippedAccessory = d.equippedAccessory;
+    if (d.equippedTrail !== undefined) equippedTrail = d.equippedTrail;
+    if (Array.isArray(d.ownedAccessories)) ownedAccessories = d.ownedAccessories;
+    if (Array.isArray(d.ownedTrails)) ownedTrails = d.ownedTrails;
+    if (d.gamesWon) gamesWon = d.gamesWon;
+    if (d.WIN && d.WIN >= 30) WIN = d.WIN === null ? Infinity : d.WIN;
+  } catch(e) {}
+}
+loadProgress();
+
+// ── Skin helpers ──────────────────────────────
+function getSkinProp(prop, overrideSkin) {
+  const id = overrideSkin !== undefined ? overrideSkin : equippedSkin;
+  if (id === 'rainbow') {
+    const baseH = { body:0, head:40, belly:80, leg:320, arm:280, eye:120, ol:200 };
+    const h = ((frame * 2) + (baseH[prop] || 0)) % 360;
+    const l = prop === 'belly' ? 72 : prop === 'eye' ? 38 : 45;
+    return `hsl(${h},80%,${l}%)`;
+  }
+  const sk = SKINS.find(s => s.id === id) || SKINS[0];
+  return sk[prop] || SKINS[0][prop];
+}
+function skinOwned(id) {
+  const sk = SKINS.find(s => s.id === id);
+  return sk ? lilyPadsTotal >= sk.threshold : false;
+}
+
+// ── Audio ─────────────────────────────────────
+let AC = null, AmbiAC = null, ambiStarted = false;
+function getAC() {
+  if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)();
+  return AC;
+}
+function resumeAC() {
+  try { if (AC && AC.state === 'suspended') AC.resume(); } catch(e) {}
+  try { if (ambienceOn && AmbiAC && AmbiAC.state === 'suspended') AmbiAC.resume(); } catch(e) {}
+}
+function playJump() {
+  if (!sfxOn) return;
+  try {
+    const ac = getAC(); const t = ac.currentTime;
+    const osc = ac.createOscillator(), gain = ac.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(210, t);
+    osc.frequency.exponentialRampToValueAtTime(480, t + 0.05);
+    osc.frequency.exponentialRampToValueAtTime(130, t + 0.16);
+    gain.gain.setValueAtTime(0.3, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+    osc.connect(gain); gain.connect(ac.destination);
+    osc.start(t); osc.stop(t + 0.22);
+  } catch(e) {}
+}
+function playLand() {
+  if (!sfxOn) return;
+  try {
+    const ac = getAC(); const t = ac.currentTime;
+    const osc = ac.createOscillator(), g1 = ac.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(195, t);
+    osc.frequency.exponentialRampToValueAtTime(42, t + 0.08);
+    g1.gain.setValueAtTime(0.38, t);
+    g1.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+    osc.connect(g1); g1.connect(ac.destination);
+    osc.start(t); osc.stop(t + 0.14);
+    const sr = ac.sampleRate;
+    const buf = ac.createBuffer(1, sr * 0.07, sr);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random()*2-1) * Math.pow(1-i/d.length, 2);
+    const ns = ac.createBufferSource(); ns.buffer = buf;
+    const flt = ac.createBiquadFilter(); flt.type='bandpass'; flt.frequency.value=750; flt.Q.value=1;
+    const g2 = ac.createGain(); g2.gain.value = 0.11;
+    ns.connect(flt); flt.connect(g2); g2.connect(ac.destination);
+    ns.start(t);
+  } catch(e) {}
+}
+function playSplash(fallVy = 8) {
+  if (!sfxOn) return;
+  try {
+    const ac = getAC(); const t = ac.currentTime; const sr = ac.sampleRate;
+    const intensity = Math.min(1, Math.max(0, (fallVy - 3) / 18));
+    const baseVol = 0.14 + intensity * 0.22;
+    const freqTop = 900 + intensity * 1400;
+    const dur1 = 0.28 + intensity * 0.24;
+    const dur2 = 0.18 + intensity * 0.16;
+    const buf1 = ac.createBuffer(1, sr * dur1, sr);
+    const d1 = buf1.getChannelData(0);
+    for (let i = 0; i < d1.length; i++) d1[i] = (Math.random()*2-1) * Math.pow(1 - i/d1.length, 1.4);
+    const src1 = ac.createBufferSource(); src1.buffer = buf1;
+    const f1 = ac.createBiquadFilter(); f1.type = 'lowpass';
+    f1.frequency.setValueAtTime(freqTop, t);
+    f1.frequency.exponentialRampToValueAtTime(120, t + dur1 * 0.75);
+    const g1 = ac.createGain();
+    g1.gain.setValueAtTime(baseVol, t);
+    g1.gain.exponentialRampToValueAtTime(0.001, t + dur1);
+    src1.connect(f1); f1.connect(g1); g1.connect(ac.destination); src1.start(t);
+    const buf2 = ac.createBuffer(1, sr * dur2, sr);
+    const d2 = buf2.getChannelData(0);
+    for (let i = 0; i < d2.length; i++) d2[i] = Math.random()*2-1;
+    const src2 = ac.createBufferSource(); src2.buffer = buf2;
+    const f2 = ac.createBiquadFilter(); f2.type = 'bandpass'; f2.frequency.value = 320; f2.Q.value = 1.2;
+    const g2 = ac.createGain();
+    g2.gain.setValueAtTime(baseVol * 0.45, t + 0.06);
+    g2.gain.exponentialRampToValueAtTime(0.001, t + 0.06 + dur2);
+    src2.connect(f2); f2.connect(g2); g2.connect(ac.destination); src2.start(t + 0.06);
+  } catch(e) {}
+}
+function playSink() {
+  if (!sfxOn) return;
+  try {
+    const ac = getAC(); const t = ac.currentTime;
+    for (let i = 0; i < 5; i++) {
+      const bt = t + i * 0.2;
+      const osc = ac.createOscillator(), g = ac.createGain();
+      osc.type = 'sine';
+      const f0 = 540 - i * 52;
+      osc.frequency.setValueAtTime(f0, bt);
+      osc.frequency.exponentialRampToValueAtTime(f0 * 0.42, bt + 0.15);
+      g.gain.setValueAtTime(Math.max(0.01, 0.18 - i * 0.02), bt);
+      g.gain.exponentialRampToValueAtTime(0.001, bt + 0.18);
+      osc.connect(g); g.connect(ac.destination);
+      osc.start(bt); osc.stop(bt + 0.2);
+    }
+  } catch(e) {}
+}
+function playDamage() {
+  if (!sfxOn) return;
+  try {
+    const ac = getAC(); const t = ac.currentTime;
+    const osc = ac.createOscillator(), g = ac.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(180, t);
+    osc.frequency.exponentialRampToValueAtTime(60, t + 0.3);
+    g.gain.setValueAtTime(0.35, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+    osc.connect(g); g.connect(ac.destination);
+    osc.start(t); osc.stop(t + 0.38);
+  } catch(e) {}
+}
+
+function startAmbience() {
+  if (ambiStarted) return;
+  ambiStarted = true;
+  try {
+    AmbiAC = new (window.AudioContext || window.webkitAudioContext)();
+    const ac = AmbiAC;
+    if (!ambienceOn) ac.suspend();
+    const sr = ac.sampleRate;
+    const wBuf = ac.createBuffer(1, sr*8, sr);
+    const wd = wBuf.getChannelData(0);
+    for (let i = 0; i < wd.length; i++) wd[i] = Math.random()*2-1;
+    const wSrc = ac.createBufferSource(); wSrc.buffer = wBuf; wSrc.loop = true;
+    const wf1 = ac.createBiquadFilter(); wf1.type='lowpass';  wf1.frequency.value = 400;
+    const wf2 = ac.createBiquadFilter(); wf2.type='highpass'; wf2.frequency.value = 75;
+    const windG = ac.createGain(); windG.gain.value = 0.025;
+    wSrc.connect(wf1); wf1.connect(wf2); wf2.connect(windG); windG.connect(ac.destination);
+    wSrc.start();
+    (function chirp() {
+      if (!AmbiAC) return;
+      if (AmbiAC.state !== 'running') { setTimeout(chirp, 200); return; }
+      if (currentEvent === 'winter' || currentEvent === 'volcanic') { setTimeout(chirp, 2000); return; }
+      const nA = nightAlpha(tod);
+      if (nA > 0.15) {
+        const t = ac.currentTime, vol = 0.035 + nA * 0.038;
+        for (let i = 0; i < 3; i++) {
+          const tc = t + i * 0.044;
+          const o = ac.createOscillator(), g = ac.createGain();
+          o.frequency.value = 3500 + Math.random() * 900;
+          g.gain.setValueAtTime(0, tc);
+          g.gain.linearRampToValueAtTime(vol, tc + 0.008);
+          g.gain.exponentialRampToValueAtTime(0.001, tc + 0.03);
+          o.connect(g); g.connect(ac.destination);
+          o.start(tc); o.stop(tc + 0.04);
+        }
+        setTimeout(chirp, 480 + Math.random() * 900);
+      } else { setTimeout(chirp, 350 + Math.random() * 500); }
+    })();
+    (function birdCall() {
+      if (!AmbiAC) return;
+      if (AmbiAC.state !== 'running') { setTimeout(birdCall, 300); return; }
+      if (currentEvent === 'winter' || currentEvent === 'volcanic') { setTimeout(birdCall, 2000); return; }
+      const nA = nightAlpha(tod);
+      const dayVol = Math.max(0, 1 - nA * 2.2);
+      if (dayVol > 0.08) {
+        const t = ac.currentTime;
+        const n = 2 + Math.floor(Math.random() * 3);
+        const baseF = 850 + Math.random() * 1400;
+        for (let i = 0; i < n; i++) {
+          const nt = t + i * 0.12;
+          const osc = ac.createOscillator(), g = ac.createGain();
+          osc.type = 'sine';
+          const fr = baseF * (0.86 + Math.random() * 0.3);
+          osc.frequency.setValueAtTime(fr, nt);
+          osc.frequency.linearRampToValueAtTime(fr * (0.88 + Math.random() * 0.24), nt + 0.09);
+          g.gain.setValueAtTime(0, nt); g.gain.linearRampToValueAtTime(dayVol * 0.036, nt + 0.012);
+          g.gain.exponentialRampToValueAtTime(0.001, nt + 0.1);
+          osc.connect(g); g.connect(ac.destination);
+          osc.start(nt); osc.stop(nt + 0.12);
+        }
+      }
+      setTimeout(birdCall, 2200 + Math.random() * 5000);
+    })();
+    (function frogCroak() {
+      if (!AmbiAC) return;
+      if (AmbiAC.state !== 'running') { setTimeout(frogCroak, 400); return; }
+      if (currentEvent === 'winter' || currentEvent === 'volcanic') { setTimeout(frogCroak, 2000); return; }
+      const nA = nightAlpha(tod);
+      const vol = 0.03 + nA * 0.04;
+      const t = ac.currentTime;
+      [0, 0.30].forEach(dt => {
+        const nt = t + dt;
+        const osc = ac.createOscillator(), flt = ac.createBiquadFilter(), g = ac.createGain();
+        osc.type = 'square';
+        const f0 = 88 + Math.random() * 38;
+        osc.frequency.setValueAtTime(f0, nt);
+        osc.frequency.exponentialRampToValueAtTime(f0 * 0.52, nt + 0.22);
+        flt.type = 'bandpass'; flt.frequency.value = 210; flt.Q.value = 2.8;
+        g.gain.setValueAtTime(0, nt); g.gain.linearRampToValueAtTime(vol, nt + 0.028);
+        g.gain.exponentialRampToValueAtTime(0.001, nt + 0.26);
+        osc.connect(flt); flt.connect(g); g.connect(ac.destination);
+        osc.start(nt); osc.stop(nt + 0.28);
+      });
+      setTimeout(frogCroak, 3200 + Math.random() * 7500);
+    })();
+    (function owlHoot() {
+      if (!AmbiAC) return;
+      if (AmbiAC.state !== 'running') { setTimeout(owlHoot, 600); return; }
+      if (currentEvent === 'winter' || currentEvent === 'volcanic') { setTimeout(owlHoot, 2000); return; }
+      const nA = nightAlpha(tod);
+      if (nA > 0.55) {
+        const t = ac.currentTime;
+        [0, 0.58, 0.95].forEach((dt, i) => {
+          const nt = t + dt;
+          const osc = ac.createOscillator(), g = ac.createGain();
+          osc.type = 'sine';
+          const f0 = i === 2 ? 210 : 305 - i * 22;
+          osc.frequency.setValueAtTime(f0, nt);
+          osc.frequency.exponentialRampToValueAtTime(f0 * 0.8, nt + 0.38);
+          g.gain.setValueAtTime(0, nt); g.gain.linearRampToValueAtTime(nA * 0.052, nt + 0.055);
+          g.gain.exponentialRampToValueAtTime(0.001, nt + 0.44);
+          osc.connect(g); g.connect(ac.destination);
+          osc.start(nt); osc.stop(nt + 0.46);
+        });
+      }
+      setTimeout(owlHoot, 8000 + Math.random() * 14000);
+    })();
+    (function drip() {
+      if (!AmbiAC) return;
+      if (AmbiAC.state !== 'running') { setTimeout(drip, 200); return; }
+      if (currentEvent === 'volcanic') { setTimeout(drip, 2000); return; }
+      const t = ac.currentTime;
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(470 + Math.random() * 340, t);
+      o.frequency.exponentialRampToValueAtTime(125, t + 0.09);
+      g.gain.setValueAtTime(0.036, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+      o.connect(g); g.connect(ac.destination);
+      o.start(t); o.stop(t + 0.14);
+      setTimeout(drip, 1600 + Math.random() * 3400);
+    })();
+  } catch(e) {}
+}
+
+// ── Color utilities + day/night ───────────────
+function lerp(a, b, t) { return a + (b - a) * t; }
+function lerpC(a, b, t) { return [lerp(a[0],b[0],t), lerp(a[1],b[1],t), lerp(a[2],b[2],t)]; }
+function rgb(c) { return `rgb(${c[0]|0},${c[1]|0},${c[2]|0})`; }
+// Swamp sky: hazy, humid, greenish-blue days; murky orange-purple sunsets
+const SKY_STOPS = [
+  [0.00, [4,8,20],      [7,15,30]],     // midnight
+  [0.22, [12,6,30],     [22,10,50]],    // pre-dawn
+  [0.29, [138,62,22],   [58,26,80]],    // dawn — amber swamp sunrise
+  [0.38, [52,108,72],   [20,60,44]],    // morning — hazy humid sky
+  [0.50, [44,98,65],    [16,52,38]],    // noon — muted swamp sky
+  [0.65, [52,108,72],   [20,60,44]],    // afternoon
+  [0.72, [145,62,18],   [55,22,75]],    // dusk — murky amber-purple
+  [0.83, [12,6,30],     [22,10,50]],    // evening
+  [1.00, [4,8,20],      [7,15,30]],     // midnight
+];
+// Swamp water: dark murky green-brown, never bright blue
+const WATER_STOPS = [
+  [0.00, [10,28,16],  [5,14,8]],      // night: dark deep green
+  [0.29, [52,34,16],  [26,16,36]],    // dawn: brownish-green
+  [0.50, [18,48,26],  [9,26,14]],     // day: murky algae green
+  [0.75, [48,30,14],  [24,14,32]],    // dusk: brown-purple
+  [1.00, [10,28,16],  [5,14,8]],      // night
+];
+function interpStops(stops, t) {
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (t >= stops[i][0] && t <= stops[i+1][0]) {
+      const r = (t - stops[i][0]) / (stops[i+1][0] - stops[i][0]);
+      return { top: lerpC(stops[i][1], stops[i+1][1], r),
+               bot: lerpC(stops[i][2], stops[i+1][2], r) };
+    }
+  }
+  return { top: stops[0][1], bot: stops[0][2] };
+}
+function nightAlpha(t) {
+  if (t <= 0.20) return 1;
+  if (t <= 0.30) return 1 - (t - 0.20) / 0.10;
+  if (t <= 0.72) return 0;
+  if (t <= 0.82) return (t - 0.72) / 0.10;
+  return 1;
+}
+
+// ── Stars / Fireflies / BG mosquitoes ─────────
+const STARS = Array.from({ length: 72 }, (_, i) => ({
+  x: (i * 139.7) % W, y: Math.random() * HORIZON * 0.88,
+  r: 0.4 + Math.random() * 1.4, tw: Math.random() * Math.PI * 2
+}));
+const FLIES = Array.from({ length: 18 }, () => ({
+  x: Math.random() * W, y: HORIZON + 20 + Math.random() * 110,
+  ph: Math.random() * Math.PI * 2, dx: (Math.random() - 0.5) * 0.28, dy: (Math.random() - 0.5) * 0.14
+}));
+const BGMOSQ = Array.from({ length: 10 }, () => ({
+  ox: Math.random() * W, oy: HORIZON + 15 + Math.random() * 90,
+  ph: Math.random() * Math.PI * 2, spd: 0.022 + Math.random() * 0.018,
+  wp: Math.random() * Math.PI * 2
+}));
+// ── Swamp-specific environment arrays ─────────
+const ALGAE_PATCHES = Array.from({ length: 22 }, (_, i) => ({
+  x: 80 + i * 95 + Math.random() * 60,
+  y: HORIZON + 28 + Math.random() * 140,
+  rx: 14 + Math.random() * 34, ry: 5 + Math.random() * 13,
+  rot: Math.random() * Math.PI, alpha: 0.10 + Math.random() * 0.16,
+  spd: 0.25 + Math.random() * 0.4,
+  col: `rgb(${12 + (Math.random()*18)|0},${40 + (Math.random()*28)|0},${8 + (Math.random()*14)|0})`
+}));
+const FOG_WISPS = Array.from({ length: 10 }, () => ({
+  x: Math.random() * W, y: HORIZON + 5 + Math.random() * 40,
+  rx: 45 + Math.random() * 80, ry: 9 + Math.random() * 20,
+  dx: (Math.random() - 0.5) * 0.10, alpha: 0.10 + Math.random() * 0.14,
+  freq: 0.004 + Math.random() * 0.009, phase: Math.random() * Math.PI * 2
+}));
+const CATTAILS = Array.from({ length: 18 }, (_, i) => ({
+  x: 15 + i * 68 + Math.random() * 35,
+  height: 30 + Math.random() * 26, thick: 1.6 + Math.random() * 1.6,
+  phase: Math.random() * Math.PI * 2, hasLeaf: Math.random() > 0.45
+}));
+const CYPRESS_TREES = Array.from({ length: 20 }, (_, i) => ({
+  x: i * 52 + Math.random() * 30, h: 42 + Math.random() * 28,
+  w: 9 + Math.random() * 8, layer: Math.random() > 0.45 ? 1 : 0
+}));
+const GNARLED_TREES = Array.from({ length: 6 }, (_, i) => ({
+  x: 30 + i * 88 + Math.random() * 50, h: 32 + Math.random() * 18
+}));
+const BG_LILY_PADS = Array.from({ length: 24 }, (_, i) => ({
+  x: Math.random() * W, y: HORIZON + 35 + Math.random() * 140,
+  r: 6 + Math.random() * 18, alpha: 0.18 + Math.random() * 0.28,
+  phase: Math.random() * Math.PI * 2, drift: 0.04 + Math.random() * 0.12
+}));
+
+// ── Background draw ───────────────────────────
+
+// Draw a cypress tree silhouette (tall, narrow, tapered)
+function drawCypress(x, baseY, h, w, col) {
+  ctx.fillStyle = col;
+  // Three stacked ellipses that narrow toward the top
+  ctx.beginPath(); ctx.ellipse(x, baseY - h*0.18, w*0.55, h*0.22, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(x, baseY - h*0.50, w*0.38, h*0.24, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(x, baseY - h*0.78, w*0.22, h*0.20, 0, 0, Math.PI*2); ctx.fill();
+  // Pointed tip
+  ctx.beginPath();
+  ctx.moveTo(x - w*0.10, baseY - h*0.88);
+  ctx.lineTo(x, baseY - h); ctx.lineTo(x + w*0.10, baseY - h*0.88);
+  ctx.closePath(); ctx.fill();
+}
+
+// Draw a gnarled dead swamp tree (bare branches)
+function drawGnarledTree(x, baseY, h, col) {
+  ctx.strokeStyle = col; ctx.lineCap = 'round';
+  ctx.lineWidth = 2.8;
+  ctx.beginPath();
+  ctx.moveTo(x, baseY);
+  ctx.quadraticCurveTo(x + 4, baseY - h*0.55, x - 3, baseY - h);
+  ctx.stroke();
+  // Branches
+  [[0.42, 1, 14, -6], [0.58, -1, 16, -8], [0.72, 1, 10, -5]].forEach(([yf, dir, len, dy]) => {
+    const bx = x + (yf*8 - 4), by = baseY - h*yf;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(bx, by);
+    ctx.quadraticCurveTo(bx + dir*len*0.5, by + dy, bx + dir*len, by + dy*0.4);
+    ctx.stroke();
+    ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(bx + dir*len*0.7, by + dy*0.5);
+    ctx.lineTo(bx + dir*len + dir*6, by + dy*0.3 - 5); ctx.stroke();
+  });
+}
+
+// Draw hanging Spanish moss tendrils from a tree top
+function drawMoss(x, topY, width, col) {
+  ctx.strokeStyle = col; ctx.lineWidth = 1.1; ctx.lineCap = 'round';
+  const strands = 5;
+  for (let i = 0; i < strands; i++) {
+    const sx = x - width*0.35 + (i / (strands-1)) * width*0.7;
+    const len = 12 + Math.abs(Math.sin(sx * 0.4 + wv * 0.005)) * 14;
+    const sway = Math.sin(wv * 0.015 + sx * 0.3) * 2;
+    ctx.beginPath();
+    ctx.moveTo(sx, topY);
+    ctx.quadraticCurveTo(sx + sway, topY + len*0.5, sx + sway*1.5, topY + len);
+    ctx.stroke();
+  }
+}
+
+function drawBG() {
+  const nA = nightAlpha(tod);
+
+  // ── Sky ──────────────────────────────────────
+  let skyTop, skyBot;
+  if (currentEvent === 'volcanic') {
+    skyTop = lerpC([55,20,5],   [90,35,10], 0.5 + Math.sin(wv*0.02)*0.1);
+    skyBot = lerpC([30,10,3],   [55,18,6],  0.5);
+  } else if (currentEvent === 'winter') {
+    const s = interpStops(SKY_STOPS, tod);
+    skyTop = lerpC(s.top, [150,185,210], 0.55);
+    skyBot = lerpC(s.bot, [110,150,180], 0.55);
+  } else if (currentEvent === 'spring') {
+    const s = interpStops(SKY_STOPS, tod);
+    skyTop = lerpC(s.top, [78,155,95], 0.42);
+    skyBot = lerpC(s.bot, [44,105,60], 0.42);
+  } else {
+    const s = interpStops(SKY_STOPS, tod);
+    skyTop = s.top; skyBot = s.bot;
+  }
+  const grad = ctx.createLinearGradient(0, 0, 0, HORIZON);
+  grad.addColorStop(0, rgb(skyTop)); grad.addColorStop(1, rgb(skyBot));
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, HORIZON);
+
+  // Atmospheric haze band near horizon (swamp humidity)
+  if (currentEvent !== 'volcanic') {
+    const hazeA = currentEvent === 'winter' ? 0.18 : 0.14 + Math.sin(wv*0.007)*0.04;
+    const hazeCol = currentEvent === 'spring' ? 'rgba(160,210,150,' : 'rgba(110,150,100,';
+    const hg = ctx.createLinearGradient(0, HORIZON - 40, 0, HORIZON + 30);
+    hg.addColorStop(0, hazeCol + '0)');
+    hg.addColorStop(0.45, hazeCol + hazeA + ')');
+    hg.addColorStop(1, hazeCol + '0)');
+    ctx.fillStyle = hg; ctx.fillRect(0, HORIZON - 40, W, 70);
+  }
+
+  // ── Stars ────────────────────────────────────
+  if (nA > 0 && currentEvent !== 'volcanic') {
+    STARS.forEach(s => {
+      s.tw += 0.012;
+      const br = 0.45 + Math.sin(s.tw) * 0.55;
+      ctx.globalAlpha = nA * br * 0.9;
+      ctx.fillStyle = '#e8f0d8'; // slightly warm/green tint through swamp air
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  // ── Moon ─────────────────────────────────────
+  const mx = 340, my = 55;
+  if (nA > 0 && currentEvent !== 'volcanic') {
+    ctx.globalAlpha = nA;
+    // Eerie greenish moon halo through swamp mist
+    const mhalo = ctx.createRadialGradient(mx, my, 0, mx, my, 62);
+    mhalo.addColorStop(0, 'rgba(180,210,155,0.22)');
+    mhalo.addColorStop(0.5, 'rgba(140,180,110,0.08)');
+    mhalo.addColorStop(1, 'rgba(80,120,60,0)');
+    ctx.fillStyle = mhalo; ctx.beginPath(); ctx.arc(mx, my, 62, 0, Math.PI*2); ctx.fill();
+    const mg = ctx.createRadialGradient(mx, my, 0, mx, my, 24);
+    mg.addColorStop(0, 'rgba(240,248,218,1)');
+    mg.addColorStop(0.72, 'rgba(220,235,192,0.92)');
+    mg.addColorStop(1, 'rgba(180,200,148,0)');
+    ctx.fillStyle = mg; ctx.beginPath(); ctx.arc(mx, my, 24, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // ── Sun (day, hazy through swamp atmosphere) ─
+  const sunA = Math.max(0, 1 - nA * 2);
+  if (sunA > 0 && currentEvent !== 'volcanic') {
+    const sunX = 68, sunY = 52;
+    ctx.globalAlpha = sunA * (currentEvent === 'winter' ? 0.7 : 0.88);
+    const shalo = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, 52);
+    shalo.addColorStop(0, 'rgba(255,238,160,0.28)');
+    shalo.addColorStop(1, 'rgba(200,175,70,0)');
+    ctx.fillStyle = shalo; ctx.beginPath(); ctx.arc(sunX, sunY, 52, 0, Math.PI*2); ctx.fill();
+    const sg = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, 22);
+    sg.addColorStop(0, 'rgba(255,245,175,1)');
+    sg.addColorStop(0.55, 'rgba(255,212,82,0.88)');
+    sg.addColorStop(1, 'rgba(215,165,35,0)');
+    ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(sunX, sunY, 22, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // ── Volcano (volcanic event) ─────────────────
+  if (currentEvent === 'volcanic') {
+    const vsx = volcanoX - camX;
+    if (vsx > -220 && vsx < W + 220) {
+      // Ash cloud behind volcano
+      const ashg = ctx.createRadialGradient(vsx, HORIZON - 90, 0, vsx, HORIZON - 90, 120);
+      ashg.addColorStop(0, 'rgba(60,30,10,0.55)');
+      ashg.addColorStop(1, 'rgba(30,10,5,0)');
+      ctx.fillStyle = ashg; ctx.beginPath(); ctx.arc(vsx, HORIZON - 90, 120, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#2e1205';
+      ctx.beginPath();
+      ctx.moveTo(vsx-90,HORIZON); ctx.lineTo(vsx-22,HORIZON-132);
+      ctx.lineTo(vsx,HORIZON-154); ctx.lineTo(vsx+22,HORIZON-132);
+      ctx.lineTo(vsx+90,HORIZON); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#4a1a08';
+      ctx.beginPath();
+      ctx.moveTo(vsx-65,HORIZON); ctx.lineTo(vsx-16,HORIZON-122);
+      ctx.lineTo(vsx+65,HORIZON); ctx.closePath(); ctx.fill();
+      // Lava glow at crater
+      const lvg = ctx.createRadialGradient(vsx, HORIZON-152, 0, vsx, HORIZON-152, 38);
+      lvg.addColorStop(0, 'rgba(255,140,0,1)');
+      lvg.addColorStop(0.4, 'rgba(255,80,0,0.7)');
+      lvg.addColorStop(1, 'rgba(200,20,0,0)');
+      ctx.fillStyle = lvg; ctx.beginPath(); ctx.arc(vsx, HORIZON-152, 38, 0, Math.PI*2); ctx.fill();
+      // Lava glow on water (arc only, no full fillRect)
+      ctx.save(); ctx.globalAlpha = 0.20;
+      const lwg = ctx.createRadialGradient(vsx, HORIZON+50, 0, vsx, HORIZON+50, 200);
+      lwg.addColorStop(0, 'rgba(255,80,0,1)'); lwg.addColorStop(1, 'rgba(200,20,0,0)');
+      ctx.fillStyle = lwg; ctx.beginPath(); ctx.arc(vsx, HORIZON+50, 200, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // ── Far cypress treeline (two depth layers) ──
+  // Far layer — shorter, desaturated
+  const farCol  = currentEvent === 'spring'   ? '#1a5a1e' :
+                  currentEvent === 'volcanic'  ? '#1e0c04' :
+                  currentEvent === 'winter'    ? '#223028' : '#0e1e0e';
+  const nearCol = currentEvent === 'spring'   ? '#122e14' :
+                  currentEvent === 'volcanic'  ? '#160a02' :
+                  currentEvent === 'winter'    ? '#18221a' : '#0a150a';
+  // Far layer
+  for (let i = 0; i < CYPRESS_TREES.length; i++) {
+    const ct = CYPRESS_TREES[i];
+    if (ct.layer === 0) drawCypress(ct.x, HORIZON, ct.h * 0.65, ct.w * 0.72, farCol);
+  }
+  // Near layer + gnarled trees
+  for (let i = 0; i < CYPRESS_TREES.length; i++) {
+    const ct = CYPRESS_TREES[i];
+    if (ct.layer === 1) {
+      drawCypress(ct.x, HORIZON, ct.h, ct.w, nearCol);
+      // Spanish moss on some near trees (not volcanic/winter)
+      if (currentEvent !== 'volcanic' && currentEvent !== 'winter' && ct.w > 12) {
+        drawMoss(ct.x, HORIZON - ct.h * 0.62, ct.w * 0.8, nearCol);
+      }
+    }
+  }
+  // Gnarled dead trees scattered in
+  for (let i = 0; i < GNARLED_TREES.length; i++) {
+    const gt = GNARLED_TREES[i];
+    const gCol = currentEvent === 'volcanic' ? '#2a0e04' : currentEvent === 'winter' ? '#2a3530' : '#161e10';
+    drawGnarledTree(gt.x, HORIZON, gt.h, gCol);
+  }
+  // Spring: blossoms on treeline
+  if (currentEvent === 'spring') {
+    for (let i = 0; i < CYPRESS_TREES.length; i++) {
+      const ct = CYPRESS_TREES[i];
+      if (ct.layer === 1 && ct.w > 11) {
+        ctx.fillStyle = `rgba(255,180,210,${0.55 + Math.sin(ct.x * 0.22 + wv*0.01)*0.25})`;
+        ctx.beginPath(); ctx.arc(ct.x, HORIZON - ct.h * 0.85, ct.w * 0.45, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = `rgba(255,220,230,0.3)`;
+        ctx.beginPath(); ctx.arc(ct.x + ct.w*0.2, HORIZON - ct.h * 0.68, ct.w * 0.3, 0, Math.PI*2); ctx.fill();
+      }
+    }
+  }
+
+  // ── Swamp shore / land bank behind the treeline ─
+  if (currentEvent !== 'volcanic') {
+    const bankCol  = currentEvent === 'winter' ? '#1e2e26' : currentEvent === 'spring' ? '#1e4020' : '#141e10';
+    const bankCol2 = currentEvent === 'winter' ? '#28402e' : currentEvent === 'spring' ? '#285230' : '#1a2814';
+    ctx.fillStyle = bankCol;
+    ctx.beginPath(); ctx.moveTo(0, HORIZON);
+    for (let bx = 0; bx <= W; bx += 18) {
+      const by = HORIZON + 2 + Math.sin(bx * 0.09 + 1.4) * 5 + Math.sin(bx * 0.04) * 8;
+      ctx.lineTo(bx, by);
+    }
+    ctx.lineTo(W, HORIZON + 30); ctx.lineTo(0, HORIZON + 30); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = bankCol2;
+    ctx.beginPath(); ctx.moveTo(0, HORIZON + 5);
+    for (let bx = 0; bx <= W; bx += 12) {
+      const by = HORIZON + 8 + Math.sin(bx * 0.13 + 2.2) * 4 + Math.sin(bx * 0.05) * 5;
+      ctx.lineTo(bx, by);
+    }
+    ctx.lineTo(W, HORIZON + 22); ctx.lineTo(0, HORIZON + 22); ctx.closePath(); ctx.fill();
+    // Grass tufts
+    const grassCol = currentEvent === 'spring' ? '#3a7228' : '#2a4e1a';
+    for (let gx = 8; gx < W; gx += 14) {
+      const baseY = HORIZON + 9 + Math.sin(gx * 0.13 + 2.2) * 4;
+      const sway = Math.sin(wv * 0.02 + gx * 0.25) * 1.5;
+      ctx.strokeStyle = grassCol; ctx.lineWidth = 1.2; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(gx, baseY);
+      ctx.quadraticCurveTo(gx + sway, baseY - 7, gx + sway * 1.5, baseY - 10); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(gx + 4, baseY - 1);
+      ctx.quadraticCurveTo(gx + 4 + sway * 0.8, baseY - 6, gx + 5 + sway, baseY - 8); ctx.stroke();
+    }
+  }
+
+  // ── Water (murky swamp) ──────────────────────
+  const ws = interpStops(WATER_STOPS, tod);
+  let waterTop, waterBot;
+  if (currentEvent === 'volcanic') {
+    waterTop = lerpC(ws.top, [100,28,6], 0.62);
+    waterBot = lerpC(ws.bot, [65,14,3], 0.62);
+  } else if (currentEvent === 'winter') {
+    waterTop = [128, 165, 175]; waterBot = [88, 128, 145];
+  } else if (currentEvent === 'spring') {
+    waterTop = lerpC(ws.top, [28,78,42], 0.38);
+    waterBot = lerpC(ws.bot, [14,48,24], 0.38);
+  } else {
+    waterTop = ws.top; waterBot = ws.bot;
+  }
+  const wg = ctx.createLinearGradient(0, HORIZON, 0, H);
+  wg.addColorStop(0,   rgb(waterTop));
+  wg.addColorStop(0.5, rgb(lerpC(waterTop, waterBot, 0.75)));
+  wg.addColorStop(1,   rgb(waterBot));
+  ctx.fillStyle = wg; ctx.fillRect(0, HORIZON, W, H - HORIZON);
+
+  // ── Algae surface patches ─────────────────────
+  if (currentEvent !== 'winter' && currentEvent !== 'volcanic') {
+    ctx.save();
+    for (let i = 0; i < ALGAE_PATCHES.length; i++) {
+      const a = ALGAE_PATCHES[i];
+      const ax = ((a.x - wv * a.spd * 0.4) % (W + 300) + W + 300) % (W + 300) - 100;
+      ctx.globalAlpha = a.alpha * (currentEvent === 'spring' ? 1.3 : 1);
+      ctx.fillStyle = a.col;
+      ctx.beginPath(); ctx.ellipse(ax, a.y, a.rx, a.ry, a.rot, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // ── Ground mist / fog layers ─────────────────
+  if (currentEvent !== 'volcanic') {
+    const baseA = currentEvent === 'winter' ? 0.30 : 0.18 + Math.sin(wv*0.007)*0.05;
+    // Main fog band at horizon
+    const fg = ctx.createLinearGradient(0, HORIZON - 8, 0, HORIZON + 60);
+    fg.addColorStop(0,   'rgba(120,155,108,0)');
+    fg.addColorStop(0.28, `rgba(118,148,105,${baseA * 0.65})`);
+    fg.addColorStop(0.62, `rgba(105,138,92,${baseA * 0.40})`);
+    fg.addColorStop(1,   'rgba(92,125,80,0)');
+    ctx.fillStyle = fg; ctx.fillRect(0, HORIZON - 8, W, 68);
+    // Individual wisp blobs
+    for (let i = 0; i < FOG_WISPS.length; i++) {
+      const fw = FOG_WISPS[i];
+      fw.x += fw.dx;
+      if (fw.x > W + 90) fw.x = -90; if (fw.x < -90) fw.x = W + 90;
+      const wy = fw.y + Math.sin(wv * fw.freq + fw.phase) * 6;
+      const wa = baseA * fw.alpha * (0.55 + Math.sin(wv * 0.009 + fw.phase) * 0.28);
+      if (wa < 0.01) continue;
+      ctx.save(); ctx.globalAlpha = wa;
+      const wfg = ctx.createRadialGradient(fw.x, wy, 0, fw.x, wy, fw.rx);
+      wfg.addColorStop(0, 'rgba(135,162,118,1)'); wfg.addColorStop(1, 'rgba(100,135,85,0)');
+      ctx.fillStyle = wfg;
+      ctx.beginPath(); ctx.ellipse(fw.x, wy, fw.rx, fw.ry, 0, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+  }
+  // Volcanic ash haze over water
+  if (currentEvent === 'volcanic') {
+    const ag = ctx.createLinearGradient(0, HORIZON, 0, HORIZON + 80);
+    ag.addColorStop(0,  `rgba(80,30,8,${0.18 + Math.sin(wv*0.012)*0.06})`);
+    ag.addColorStop(1,  'rgba(40,12,3,0)');
+    ctx.fillStyle = ag; ctx.fillRect(0, HORIZON, W, 80);
+  }
+
+  // ── Cattails / reeds ─────────────────────────
+  if (currentEvent !== 'winter') {
+    const ctBaseA = currentEvent === 'volcanic' ? 0.55 : 0.9;
+    for (let i = 0; i < CATTAILS.length; i++) {
+      const ct = CATTAILS[i];
+      const cx = ((ct.x - wv * 0.08) % (W + 120) + W + 120) % (W + 120) - 60;
+      const sway = Math.sin(wv * 0.022 + ct.phase) * 3.5;
+      ctx.save(); ctx.globalAlpha = ctBaseA;
+      // Stem
+      ctx.strokeStyle = currentEvent === 'spring' ? '#4a7a28' : '#3a5520';
+      ctx.lineWidth = ct.thick;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cx, HORIZON + ct.height + 10);
+      ctx.quadraticCurveTo(cx + sway * 0.45, HORIZON + ct.height * 0.5, cx + sway, HORIZON + 4);
+      ctx.stroke();
+      // Cattail pod
+      ctx.fillStyle = '#2e1808';
+      ctx.beginPath(); ctx.ellipse(cx + sway, HORIZON + 4, ct.thick * 1.7, ct.thick * 4.2, 0, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#4a2810';
+      ctx.beginPath(); ctx.ellipse(cx + sway, HORIZON + 2, ct.thick * 1.2, ct.thick * 2.5, 0, 0, Math.PI*2); ctx.fill();
+      // Leaf blade
+      if (ct.hasLeaf) {
+        ctx.strokeStyle = currentEvent === 'spring' ? '#58922e' : '#446624';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(cx + sway * 0.4, HORIZON + ct.height * 0.55);
+        ctx.quadraticCurveTo(cx + sway + 20, HORIZON + ct.height * 0.28, cx + sway + 26, HORIZON + ct.height * 0.15);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+
+  // ── Background decorative lily pads ─────────
+  if (currentEvent !== 'volcanic') {
+    const bgPadCol  = currentEvent === 'winter' ? '#2a4838' : currentEvent === 'spring' ? '#3a8830' : '#2e6228';
+    const bgPadCol2 = currentEvent === 'winter' ? '#3a5e48' : currentEvent === 'spring' ? '#52a840' : '#3a7a34';
+    ctx.save();
+    for (let i = 0; i < BG_LILY_PADS.length; i++) {
+      const bl = BG_LILY_PADS[i];
+      // Slow parallax drift (closer to bg = slower)
+      bl.x -= bl.drift;
+      if (bl.x < -bl.r * 2) bl.x = W + bl.r * 2;
+      const bob = Math.sin(wv * 0.018 + bl.phase) * 1.5;
+      ctx.globalAlpha = bl.alpha;
+      // Shadow/depth
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.beginPath(); ctx.ellipse(bl.x + 2, bl.y + bob + 4, bl.r * 0.92, bl.r * 0.28, 0, 0, Math.PI*2); ctx.fill();
+      // Pad
+      ctx.fillStyle = bgPadCol;
+      ctx.beginPath(); ctx.ellipse(bl.x, bl.y + bob, bl.r, bl.r * 0.32, 0, 0, Math.PI*2); ctx.fill();
+      // Highlight top
+      ctx.fillStyle = bgPadCol2;
+      ctx.beginPath(); ctx.ellipse(bl.x - bl.r*0.08, bl.y + bob - bl.r*0.04, bl.r * 0.72, bl.r * 0.18, -0.1, 0, Math.PI*2); ctx.fill();
+      // Notch line
+      ctx.strokeStyle = bgPadCol; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.moveTo(bl.x, bl.y + bob - bl.r*0.3); ctx.lineTo(bl.x, bl.y + bob + bl.r*0.3); ctx.stroke();
+      // Optional small flower for spring
+      if (currentEvent === 'spring' && bl.r > 12) {
+        ctx.fillStyle = 'rgba(255,200,220,0.7)';
+        ctx.beginPath(); ctx.arc(bl.x + bl.r*0.25, bl.y + bob - bl.r*0.12, bl.r*0.18, 0, Math.PI*2); ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  // ── Ice surface (winter event) ───────────────
+  if (currentEvent === 'winter') {
+    // Frost / snow on water surface
+    const iceG = ctx.createLinearGradient(0, WATER_Y - 8, 0, WATER_Y + 16);
+    iceG.addColorStop(0,   'rgba(210,240,255,0.70)');
+    iceG.addColorStop(0.5, 'rgba(190,225,248,0.45)');
+    iceG.addColorStop(1,   'rgba(160,205,235,0)');
+    ctx.fillStyle = iceG; ctx.fillRect(0, WATER_Y - 8, W, 24);
+    ctx.strokeStyle = 'rgba(210,238,255,0.85)'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(0, WATER_Y - 2); ctx.lineTo(W, WATER_Y - 2); ctx.stroke();
+    // Ice crack network
+    ctx.strokeStyle = 'rgba(160,210,240,0.38)'; ctx.lineWidth = 0.7;
+    for (let ix = 30; ix < W; ix += 100) {
+      ctx.beginPath(); ctx.moveTo(ix, WATER_Y - 8);
+      ctx.lineTo(ix + 18, WATER_Y); ctx.lineTo(ix + 32, WATER_Y - 5);
+      ctx.lineTo(ix + 50, WATER_Y + 3); ctx.stroke();
+    }
+    // Snow particles
+    while (snowParts.length < 70) {
+      snowParts.push({ x:Math.random()*W, y:Math.random()*HORIZON, vy:0.5+Math.random()*1.5, vx:(Math.random()-0.5)*0.5, r:0.8+Math.random()*2.2 });
+    }
+    ctx.fillStyle = 'rgba(225,242,255,0.88)';
+    snowParts.forEach(s => {
+      s.y += s.vy; s.x += s.vx;
+      if (s.y > HORIZON) { s.y = -4; s.x = Math.random()*W; }
+      if (s.x < 0) s.x = W; if (s.x > W) s.x = 0;
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill();
+    });
+  } else { snowParts = []; }
+
+  // ── Water shimmer (algae-green tint) ─────────
+  const shimA = Math.max(0, 0.16 - nA * 0.12);
+  if (shimA > 0 && currentEvent !== 'winter') {
+    const shimCol = currentEvent === 'volcanic' ? '180,80,20' : currentEvent === 'spring' ? '90,195,80' : '78,168,72';
+    for (let i = 0; i < 10; i++) {
+      const ssx = ((i * 56 + wv * 0.30) % (W + 30));
+      const ssy = WATER_Y + 5 + i * 8;
+      const ssz = Math.max(0, 0.20 + Math.sin(i * 0.92 + wv * 0.052) * 0.28);
+      if (ssz <= 0) continue;
+      ctx.save(); ctx.globalAlpha = ssz * shimA;
+      ctx.fillStyle = `rgb(${shimCol})`;
+      ctx.beginPath(); ctx.ellipse(ssx, ssy, ssz * 28, ssz * 3.5, 0, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // ── Moon reflection (greenish cast) ──────────
+  if (nA > 0 && currentEvent !== 'volcanic') {
+    const rip = Math.sin(wv * 0.055) * 7;
+    for (let ry = 0; ry < 70; ry += 11) {
+      const ww = Math.max(0, 5 + Math.sin(ry * 0.19 + wv * 0.038) * 10);
+      ctx.save(); ctx.globalAlpha = nA * (0.18 - ry * 0.0022);
+      ctx.fillStyle = '#d8e8c0'; // green-tinged reflection
+      ctx.beginPath(); ctx.ellipse(mx + rip, HORIZON + 14 + ry, ww, 1.1, 0, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+}
+
+// ── Pad helpers ───────────────────────────────
+function makePad(x, y, w) { return { x, y, baseY:y, w, st:0, t:-1 }; }
+function padTick(p, i) {
+  if (p.st < 1) return;
+  if (currentEvent === 'winter') return; // frozen lake
+  // Freeze pad timer while frog is balancing (spring=unlimited balance in frogTick)
+  if (i === curPad && frog && frog.grounded && frog.balancing) return;
+  p.t += 1/60;
+  const wt = currentEvent === 'spring' ? WARN_T * 2.5 : WARN_T;
+  const st = currentEvent === 'spring' ? SINK_T * 2 : SINK_T;
+  if (p.st === 1 && p.t >= wt) p.st = 2;
+  if (p.st === 2) {
+    const s = (p.t - wt) / st;
+    p.y = p.baseY + s * 80;
+    if (s >= 1) { p.st = 3; p.y = p.baseY + 80; }
+  }
+}
+function padActivate(p) { if (p.st === 0) { p.st = 1; p.t = 0; } }
+function padAlpha(p) { 
+  const wt = currentEvent === 'spring' ? WARN_T * 2.5 : WARN_T;
+  const st = currentEvent === 'spring' ? SINK_T * 2 : SINK_T;
+  if (p.st < 2) return 1; return Math.max(0, 1 - (p.t - wt) / st); 
+}
+function padTimeLeft(p) {
+  const wt = currentEvent === 'spring' ? WARN_T * 2.5 : WARN_T;
+  if (p.st === 0) return wt; if (p.st === 1) return Math.max(0, wt - p.t); return 0;
+}
+function drawPad(p) {
+  const sx = p.x - camX;
+  if (sx < -150 || sx > W + 150) return;
+  const al = padAlpha(p);
+  if (al <= 0) return;
+  const padW = p.w * (currentEvent === 'spring' ? 1.4 : currentEvent === 'winter' ? 0.70 : 1);
+  ctx.save(); ctx.globalAlpha = al; ctx.translate(sx, p.y);
+  ctx.fillStyle = currentEvent === 'spring' ? '#1a3818' : '#142814';
+  ctx.beginPath(); ctx.ellipse(3, 11, padW/2, 11, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = currentEvent === 'spring' ? '#4aaa30' : '#347034';
+  ctx.beginPath(); ctx.ellipse(0, 0, padW/2, 12, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = currentEvent === 'spring' ? '#70d050' : '#4ea04e';
+  ctx.beginPath(); ctx.ellipse(-1, -3, padW/2 - 9, 7, 0, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = currentEvent === 'spring' ? '#306820' : '#215221'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(0, -11); ctx.lineTo(0, 11); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, 0, padW/2, Math.PI + 0.12, -0.12); ctx.stroke();
+  // Spring: small flower
+  if (currentEvent === 'spring' && Math.abs(p.x % 3) < 1) {
+    ctx.fillStyle = '#ffaacc';
+    ctx.beginPath(); ctx.arc(padW/2 - 8, -6, 4, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#ffe040';
+    ctx.beginPath(); ctx.arc(padW/2 - 8, -6, 2, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+  // Warning ring
+  if (p.st === 1) {
+    const wt = currentEvent === 'spring' ? WARN_T * 2.5 : WARN_T;
+    const urg = p.t / wt;
+    ctx.save(); ctx.globalAlpha = Math.min(1, urg);
+    ctx.strokeStyle = urg > 0.65 ? `rgb(255,${(88*(1-urg))|0},0)` : '#d0a020';
+    ctx.lineWidth = 2 + urg * 2;
+    ctx.beginPath();
+    ctx.ellipse(sx, p.y, padW/2 + 6, 14, 0, 0, Math.PI*2);
+    ctx.stroke(); ctx.restore();
+  }
+}
+
+// ── Frog drawing ──────────────────────────────
+function makeFrog(x, y) {
+  return {
+    x, y, vx:0, vy:0, rot:0, sqX:1, sqY:1,
+    grounded:true, dead:false, alpha:1,
+    charging:false, charge:0, balancing:false, balanceT:0,
+    tonguePhase:'idle', tongueProg:0, tongueAngle:0, tongueLen:0, tongueTarget:null,
+    tongueCooldown:6,
+    blinking:false, blinkFrame:0, blinkTimer:0,
+    onIce: false
+  };
+}
+
+function drawTrail() {
+  if (!equippedTrail || frogTrail.length < 3) return;
+  for (let i = 0; i < frogTrail.length; i++) {
+    const p = frogTrail[i];
+    const t = i / frogTrail.length;
+    const alpha = t * 0.55;
+    const radius = t * 7 + 1;
+    const sx = p.x - camX;
+    if (sx < -20 || sx > W + 20) continue;
+    if (equippedTrail === 'fire') {
+      const r = t > 0.6 ? 255 : 255;
+      const g2 = t > 0.6 ? 60 : t > 0.3 ? 130 : 220;
+      const b2 = t > 0.6 ? 20 : 40;
+      ctx.fillStyle = `rgba(${r},${g2},${b2},${alpha})`;
+    } else if (equippedTrail === 'rainbow') {
+      const h = (i / frogTrail.length * 360 + frame * 4) % 360;
+      ctx.fillStyle = `hsla(${h},100%,60%,${alpha})`;
+    } else {
+      const cols = { red:'255,60,60', blue:'60,120,255', green:'60,220,80',
+        yellow:'255,230,40', purple:'160,60,255', pink:'255,60,190', orange:'255,120,20' };
+      ctx.fillStyle = `rgba(${cols[equippedTrail] || '255,255,255'},${alpha})`;
+    }
+    ctx.beginPath(); ctx.arc(sx, p.y, radius, 0, Math.PI*2); ctx.fill();
+  }
+}
+
+function drawFrog() {
+  const f = frog;
+  if (f.alpha <= 0) return;
+  const sx = f.x - camX, sy = f.y;
+  const isInvincible = frame < invincibleUntil;
+  if (isInvincible && Math.floor(frame / 5) % 2 === 0) return;
+
+  ctx.save();
+  ctx.globalAlpha = f.alpha;
+  ctx.translate(sx, sy);
+  ctx.rotate(f.rot);
+  ctx.scale(f.sqX, f.sqY);
+
+  const legCol  = getSkinProp('leg');
+  const bodyCol = getSkinProp('body');
+  const belCol  = getSkinProp('belly');
+  const eyeCol  = getSkinProp('eye');
+  const olCol   = getSkinProp('ol');
+
+  // Back legs (behind body)
+  ctx.fillStyle = legCol;
+  if (!f.grounded) {
+    ctx.beginPath(); ctx.ellipse(-30,  1, 14,  8, -0.15, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(-33, 11, 12,  7,  0.05, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( 30,  1, 14,  8,  0.15, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( 33, 11, 12,  7, -0.05, 0, Math.PI*2); ctx.fill();
+  } else if (f.charging) {
+    ctx.beginPath(); ctx.ellipse(-21,  8, 12,  9,  0.45, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(-18, 20, 10,  7,  0.10, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( 21,  8, 12,  9, -0.45, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( 18, 20, 10,  7, -0.10, 0, Math.PI*2); ctx.fill();
+  } else {
+    ctx.beginPath(); ctx.ellipse(-24,  6, 13, 10,  0.30, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(-21, 18, 11,  8,  0.08, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( 24,  6, 13, 10, -0.30, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( 21, 18, 11,  8, -0.08, 0, Math.PI*2); ctx.fill();
+  }
+
+  // Main body blob
+  ctx.fillStyle = bodyCol;
+  ctx.beginPath(); ctx.ellipse(0, -2, 22, 20, 0, 0, Math.PI*2); ctx.fill();
+
+  // Front arm nubs
+  ctx.fillStyle = legCol;
+  ctx.beginPath(); ctx.ellipse(-17,  9, 9, 7, -0.30, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse( 17,  9, 9, 7,  0.30, 0, Math.PI*2); ctx.fill();
+
+  // Belly patch
+  ctx.fillStyle = belCol;
+  ctx.beginPath(); ctx.ellipse(0, 4, 15, 13, 0, 0, Math.PI*2); ctx.fill();
+
+  // Eyes on top of head
+  const useSmallEyes = equippedAccessory === 'smalleyes';
+  const blinkProg = f.blinking ? Math.sin(f.blinkFrame / 9 * Math.PI) : 0;
+  [[-10, -22], [10, -22]].forEach(([ex, ey]) => {
+    const eyeR = useSmallEyes ? 6 : 9;
+    const pupR = useSmallEyes ? 4 : 6;
+    const ey2  = useSmallEyes ? ey + 4 : ey;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(ex, ey2, eyeR, 0, Math.PI*2); ctx.fill();
+    if (blinkProg < 0.92) {
+      ctx.fillStyle = eyeCol;
+      ctx.beginPath(); ctx.arc(ex + 1, ey2 + 1, pupR, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(ex - 2, ey2 - 2, useSmallEyes ? 1.2 : 2, 0, Math.PI*2); ctx.fill();
+    }
+    if (blinkProg > 0.05) {
+      ctx.save();
+      ctx.beginPath(); ctx.arc(ex, ey2, eyeR + 0.5, 0, Math.PI*2); ctx.clip();
+      ctx.fillStyle = bodyCol;
+      ctx.fillRect(ex - eyeR - 1, ey2 - eyeR - 1, (eyeR + 1) * 2, (eyeR + 1) * 2 * blinkProg);
+      ctx.restore();
+    }
+  });
+
+  // Mouth
+  if (f.tonguePhase !== 'idle') {
+    ctx.fillStyle = '#e04080';
+    ctx.beginPath(); ctx.ellipse(0, -9, 6, 4, 0, 0, Math.PI*2); ctx.fill();
+  } else {
+    ctx.strokeStyle = olCol; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+    ctx.beginPath();
+    if (f.charging) {
+      ctx.moveTo(-6, -10); ctx.lineTo(6, -10);
+    } else {
+      ctx.moveTo(-7, -10); ctx.quadraticCurveTo(0, -6, 7, -10);
+    }
+    ctx.stroke();
+    if (equippedAccessory === 'tongueout') {
+      ctx.fillStyle = '#d040a0';
+      ctx.beginPath(); ctx.ellipse(0, -5, 3, 5, 0, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#b02878';
+      ctx.beginPath(); ctx.arc(0, -1, 2.5, 0, Math.PI*2); ctx.fill();
+    }
+  }
+
+  drawAccessory(equippedAccessory);
+  ctx.restore();
+
+  // Tongue (world space)
+  if (f.tonguePhase !== 'idle') {
+    const cos = Math.cos(f.rot), sin = Math.sin(f.rot);
+    const mouthX = sx + 0 * cos - (-9) * sin;
+    const mouthY = sy + 0 * sin + (-9) * cos;
+    const reach  = f.tongueProg * (f.tongueLen || TONGUE_MAX);
+    const tipX   = mouthX + Math.cos(f.tongueAngle) * reach;
+    const tipY   = mouthY + Math.sin(f.tongueAngle) * reach;
+    const cpx    = (mouthX + tipX) / 2 - Math.sin(f.tongueAngle) * 12;
+    const cpy    = (mouthY + tipY) / 2 + Math.cos(f.tongueAngle) * 12;
+    ctx.save();
+    ctx.strokeStyle = '#d040a0'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(mouthX, mouthY);
+    ctx.quadraticCurveTo(cpx, cpy, tipX, tipY); ctx.stroke();
+    ctx.fillStyle = '#b02878';
+    ctx.beginPath(); ctx.arc(tipX, tipY, 7, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  // Power arc
+  if (f.charging && !f.dead) {
+    const power = POW_MIN + f.charge * POW_RNG;
+    const tvx = power * VX_RATIO;
+    let tvy = -power;
+    let tx = f.x, ty = f.y;
+    // Simulate trajectory to find actual landing point first
+    let landX = null, landY = null, landsOnPad = false;
+    let simTx = f.x, simTy = f.y, simVy = -power;
+    for (let step = 0; step < 80; step++) {
+      simTx += tvx; simTy += simVy; simVy += GRAVITY;
+      if (simTy >= WATER_Y) { landX = simTx; landY = WATER_Y; break; }
+      for (let pi = curPad + 1; pi < Math.min(curPad + 5, pads.length); pi++) {
+        const pp = pads[pi];
+        if (pp.st === 3) continue;
+        const pw = pp.w * (currentEvent === 'spring' ? 1.4 : currentEvent === 'winter' ? 0.70 : 1);
+        if (Math.abs(simTx - pp.x) <= pw/2 - 3 && simTy >= pp.y - 22 && simTy <= pp.y + 8) {
+          landX = simTx; landY = pp.y - 23; landsOnPad = true; break;
+        }
+      }
+      if (landX !== null) break;
+    }
+    // Arc color: green only when we confirmed a pad landing, orange otherwise
+    const arcCol = landsOnPad ? [80, 220, 80] : [220, 140, 40];
+    ctx.save(); ctx.globalAlpha = 0.55;
+    for (let step = 0; step < 60; step++) {
+      tx += tvx; ty += tvy; tvy += GRAVITY;
+      if (ty > WATER_Y) break;
+      const prog = step / 60;
+      ctx.fillStyle = `rgba(${arcCol[0]},${arcCol[1]},${arcCol[2]},${0.7-prog*0.7})`;
+      ctx.beginPath(); ctx.arc(tx - camX, ty, 2.5, 0, Math.PI*2); ctx.fill();
+    }
+    if (landX !== null) {
+      ctx.fillStyle = landsOnPad ? '#40ff40' : '#ff4040';
+      ctx.beginPath(); ctx.arc(landX - camX, landY, 7, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+    const bw = 54, bh = 9;
+    const bx = sx - bw/2, by = sy - 20 * f.sqY - 30;
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.beginPath(); ctx.roundRect(bx-2, by-2, bw+4, bh+4, 4); ctx.fill();
+    [[0, 0.35, '#c83030'], [0.35, 0.70, '#30b830'], [0.70, 1, '#c83030']].forEach(([s, e, col]) => {
+      ctx.fillStyle = col; ctx.fillRect(bx + s*bw, by, (e-s)*bw, bh);
+    });
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(bx + f.charge*bw, by, bw*(1-f.charge), bh);
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1.5;
+    ctx.strokeRect(bx + 0.35*bw, by-1, 0.35*bw, bh+2);
+    ctx.fillStyle = '#bbb'; ctx.font = '9px Arial';
+    ctx.textAlign = 'center'; ctx.fillText('POWER', sx, by-5); ctx.textAlign = 'left';
+  }
+}
+
+// ── Accessories ───────────────────────────────
+function drawAccessory(accId) {
+  if (!accId || accId === 'tongueout' || accId === 'smalleyes') return;
+  ctx.save();
+  if (accId === 'glasses') {
+    ctx.strokeStyle = '#555'; ctx.lineWidth = 1.8;
+    ctx.beginPath(); ctx.arc(-10,-22,7.5,0,Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc( 10,-22,7.5,0,Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-2.5,-22); ctx.lineTo(2.5,-22); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-17.5,-22); ctx.lineTo(-21,-18); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo( 17.5,-22); ctx.lineTo( 21,-18); ctx.stroke();
+  } else if (accId === 'tophat') {
+    ctx.fillStyle = '#1a1a1a';
+    ctx.beginPath(); ctx.ellipse(0,-31,13,3.5,0,0,Math.PI*2); ctx.fill();
+    ctx.fillRect(-9,-50,18,20);
+    ctx.fillStyle = '#4a3000'; ctx.fillRect(-9,-33,18,3);
+  } else if (accId === 'monocle') {
+    ctx.strokeStyle = '#a09050'; ctx.lineWidth = 1.8;
+    ctx.beginPath(); ctx.arc(10,-22,10,0,Math.PI*2); ctx.stroke();
+    ctx.strokeStyle = '#887744'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(20,-14); ctx.lineTo(22,-8); ctx.stroke();
+  } else if (accId === 'crown') {
+    ctx.fillStyle = '#ffd700';
+    ctx.fillRect(-12,-34,24,4);
+    ctx.beginPath();
+    ctx.moveTo(-12,-34); ctx.lineTo(-8,-45); ctx.lineTo(-4,-35);
+    ctx.lineTo(0,-47); ctx.lineTo(4,-35); ctx.lineTo(8,-45); ctx.lineTo(12,-34);
+    ctx.fill();
+    ctx.fillStyle = '#ff3030'; ctx.beginPath(); ctx.arc(-8,-43,2.5,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#4488ff'; ctx.beginPath(); ctx.arc(0,-44.5,2.5,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#ff3030'; ctx.beginPath(); ctx.arc(8,-43,2.5,0,Math.PI*2); ctx.fill();
+  } else if (accId === 'bowtie') {
+    ctx.fillStyle = '#cc2020';
+    ctx.beginPath(); ctx.moveTo(-1.5,-5); ctx.lineTo(-9,-8); ctx.lineTo(-9,-2); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo( 1.5,-5); ctx.lineTo( 9,-8); ctx.lineTo( 9,-2); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#aa1818';
+    ctx.beginPath(); ctx.ellipse(0,-5,2.5,3,0,0,Math.PI*2); ctx.fill();
+  } else if (accId === 'sunhat') {
+    ctx.fillStyle = '#e8c840';
+    ctx.beginPath(); ctx.ellipse(0,-32,18,4.5,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0,-38,11,8,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#c8a020';
+    ctx.beginPath(); ctx.ellipse(0,-38,8,5,0,0,Math.PI*2); ctx.fill();
+  } else if (accId === 'blush') {
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = '#ff88aa';
+    ctx.beginPath(); ctx.ellipse(-17,-10,6,4,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( 17,-10,6,4,0,0,Math.PI*2); ctx.fill();
+  } else if (accId === 'roboticeye') {
+    ctx.fillStyle = '#202030';
+    ctx.beginPath(); ctx.arc(10,-22,11,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#00aaff';
+    ctx.beginPath(); ctx.arc(10,-22,7,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#00eeff';
+    ctx.beginPath(); ctx.arc(10,-22,3.5,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#00aaff'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(10,-11); ctx.lineTo(10,-8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(21,-22); ctx.lineTo(24,-22); ctx.stroke();
+  }
+  ctx.restore();
+}function drawAccessoryIcon(id, cx, cy) {
+  ctx.save(); ctx.translate(cx, cy);
+  if (id === 'glasses') {
+    ctx.strokeStyle = '#999'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(-8, 0, 7, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(8, 0, 7, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-1, 0); ctx.lineTo(1, 0); ctx.stroke();
+  } else if (id === 'tophat') {
+    ctx.fillStyle = '#333';
+    ctx.beginPath(); ctx.ellipse(0, 4, 11, 3, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillRect(-7, -10, 14, 15);
+    ctx.fillStyle = '#664400'; ctx.fillRect(-7, 2, 14, 2);
+  } else if (id === 'monocle') {
+    ctx.strokeStyle = '#aa9944'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI*2); ctx.stroke();
+    ctx.strokeStyle = '#887744'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(9, 6); ctx.lineTo(12, 10); ctx.stroke();
+  } else if (id === 'crown') {
+    ctx.fillStyle = '#ffd700';
+    ctx.fillRect(-10, 2, 20, 4);
+    ctx.beginPath();
+    ctx.moveTo(-10,2); ctx.lineTo(-6,-8); ctx.lineTo(-2,3);
+    ctx.lineTo(0,-10); ctx.lineTo(2,3); ctx.lineTo(6,-8); ctx.lineTo(10,2);
+    ctx.fill();
+  } else if (id === 'bowtie') {
+    ctx.fillStyle = '#cc2020';
+    ctx.beginPath(); ctx.moveTo(-2,0); ctx.lineTo(-10,-5); ctx.lineTo(-10,5); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(2,0); ctx.lineTo(10,-5); ctx.lineTo(10,5); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#aa1818'; ctx.beginPath(); ctx.arc(0,0,3,0,Math.PI*2); ctx.fill();
+  } else if (id === 'sunhat') {
+    ctx.fillStyle = '#e8c840';
+    ctx.beginPath(); ctx.ellipse(0, 4, 14, 4, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0, -2, 8, 7, 0, 0, Math.PI*2); ctx.fill();
+  } else if (id === 'blush') {
+    ctx.fillStyle = '#ff88aa'; ctx.globalAlpha = 0.7;
+    ctx.beginPath(); ctx.ellipse(-8, 0, 7, 5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( 8, 0, 7, 5, 0, 0, Math.PI*2); ctx.fill();
+  } else if (id === 'roboticeye') {
+    ctx.fillStyle = '#202030';
+    ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#00aaff';
+    ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#00eeff';
+    ctx.beginPath(); ctx.arc(0, 0, 3.5, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#006699'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI*2); ctx.stroke();
+  } else if (id === 'tongueout') {
+    ctx.fillStyle = '#d040a0';
+    ctx.beginPath(); ctx.ellipse(0, -3, 5, 3, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0, 5, 4, 5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#b02878';
+    ctx.beginPath(); ctx.arc(0, 9, 4, 0, Math.PI*2); ctx.fill();
+  } else if (id === 'smalleyes') {
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(-7, 0, 5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc( 7, 0, 5, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#224';
+    ctx.beginPath(); ctx.arc(-6, 1, 2.8, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc( 8, 1, 2.8, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawFrogPreview(cx, cy, sc, skinId, accId) {
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(sc, sc);
+  const sk = skinId !== undefined ? skinId : equippedSkin;
+  const ac = accId  !== undefined ? accId  : equippedAccessory;
+  const sp = (prop) => getSkinProp(prop, sk);
+  // Back legs
+  ctx.fillStyle = sp('leg');
+  ctx.beginPath(); ctx.ellipse(-24, 6,13,10, 0.30,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-21,18,11, 8, 0.08,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse( 24, 6,13,10,-0.30,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse( 21,18,11, 8,-0.08,0,Math.PI*2); ctx.fill();
+  // Body
+  ctx.fillStyle = sp('body');
+  ctx.beginPath(); ctx.ellipse(0,-2,22,20,0,0,Math.PI*2); ctx.fill();
+  // Front arm nubs
+  ctx.fillStyle = sp('leg');
+  ctx.beginPath(); ctx.ellipse(-17,9,9,7,-0.30,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse( 17,9,9,7, 0.30,0,Math.PI*2); ctx.fill();
+  // Belly
+  ctx.fillStyle = sp('belly');
+  ctx.beginPath(); ctx.ellipse(0,4,15,13,0,0,Math.PI*2); ctx.fill();
+  // Eyes
+  const useSmall = ac === 'smalleyes';
+  [[-10,-22],[10,-22]].forEach(([ex,ey]) => {
+    const er  = useSmall ? 6 : 9;
+    const pr  = useSmall ? 4 : 6;
+    const ey2 = useSmall ? ey+4 : ey;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(ex,ey2,er,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = sp('eye');
+    ctx.beginPath(); ctx.arc(ex+1,ey2+1,pr,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(ex-2,ey2-2,useSmall?1.2:2,0,Math.PI*2); ctx.fill();
+  });
+  // Smile
+  ctx.strokeStyle = sp('ol'); ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-7,-10); ctx.quadraticCurveTo(0,-6,7,-10); ctx.stroke();
+  if (ac === 'tongueout') {
+    ctx.fillStyle = '#d040a0';
+    ctx.beginPath(); ctx.ellipse(0,-5,3,5,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#b02878'; ctx.beginPath(); ctx.arc(0,-1,2.5,0,Math.PI*2); ctx.fill();
+  }
+  if (ac === 'blush') {
+    ctx.save(); ctx.globalAlpha = 0.6; ctx.fillStyle = '#ff88aa';
+    ctx.beginPath(); ctx.ellipse(-17,-10,6,4,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( 17,-10,6,4,0,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+  if (ac && ac !== 'tongueout' && ac !== 'smalleyes' && ac !== 'blush') drawAccessory(ac);
+  ctx.restore();
+}// ── Frog physics tick ─────────────────────────
+function frogTick() {
+  const f = frog;
+  if (f.dead) {
+    if (f.st !== 3) {
+      f.y = Math.min(f.y + 1.5, pads[curPad].baseY + 80);
+      f.alpha = Math.max(0.08, 1 - (f.y - (pads[curPad].baseY - 8)) / 58);
+    }
+    return;
+  }
+  // Squish recovery
+  f.sqX += (1 - f.sqX) * 0.15;
+  f.sqY += (1 - f.sqY) * 0.15;
+  if (!f.grounded) {
+    f.vy += GRAVITY;
+    f.x += f.vx;
+    f.y += f.vy;
+    f.rot = Math.atan2(f.vy, f.vx) * 0.28;
+  } else {
+    f.rot += (-f.rot) * 0.12;
+    if (f.charging) {
+      f.charge = Math.min(1, f.charge + 0.012);
+    }
+    if (f.balancing && currentEvent !== 'spring') {
+      f.balanceT += 1/60;
+      if (f.balanceT >= BALANCE_MAX_T) {
+        f.balancing = false; f.balanceT = 0;
+        deathType = 'sink'; deathFrame = frame;
+        frog.dead = true; gs = 'dead'; gameEndTime = Date.now();
+        playSink(); pickDeathPhrase();
+        if (score > best) { best = score; isNewBest = true; saveProgress(); }
+      }
+    }
+    // Freeze: always during winter, but pads warm you
+    if (currentEvent === 'winter' && !f.dead) {
+      if (f.grounded && !f.onIce) { frozenDamageTimer = Math.max(0, frozenDamageTimer - 2); }
+      else { frozenDamageTimer++; if (frozenDamageTimer >= 240) { frozenDamageTimer = 0; takeDamage('ice'); } }
+    } else if (currentEvent !== 'winter') { frozenDamageTimer = 0; }
+
+    // Sink detection
+    if (curPad >= 0 && curPad < pads.length && pads[curPad].st === 3 && !f.onIce) {
+      const surface = pads[curPad].baseY - 8;
+      if (f.y > surface) {
+        f.alpha = Math.max(0.08, 1 - (f.y - surface) / 58);
+      }
+    }
+  }
+  // Auto-tongue while balancing
+  if (f.grounded && f.balancing && !f.dead) {
+    f.tongueCooldown -= 1/60;
+    if (f.tongueCooldown <= 0 && f.tonguePhase === 'idle') {
+      let target = null, bestDist = TONGUE_MAX;
+      bugs.forEach(b => {
+        if (!b.alive) return;
+        const d = Math.hypot(b.x - f.x, b.y - f.y);
+        if (d < bestDist) { bestDist = d; target = b; }
+      });
+      f.tongueAngle = target ? Math.atan2(target.y - f.y, target.x - f.x) : f.rot + (Math.random() - 0.5) * 1.2;
+      f.tongueLen   = target ? bestDist : 60 + Math.random() * 60;
+      f.tonguePhase = 'out'; f.tongueProg = 0;
+      f.tongueTarget = target; f.tongueCooldown = 8 + Math.random() * 7;
+    }
+  }
+  // Tongue animation
+  if (f.tonguePhase === 'out') {
+    f.tongueProg = Math.min(1, f.tongueProg + 0.13);
+    if (f.tongueTarget && f.tongueTarget.alive) {
+      const reach = f.tongueProg * (f.tongueLen || TONGUE_MAX);
+      const tipWX = f.x + Math.cos(f.tongueAngle) * reach;
+      const tipWY = f.y + Math.sin(f.tongueAngle) * reach;
+      if (Math.hypot(f.tongueTarget.x - tipWX, f.tongueTarget.y - tipWY) < 22) {
+        const btype = f.tongueTarget.type;
+        f.tongueTarget.alive = false;
+        f.tongueTarget = null;
+        f.tonguePhase = 'in';
+        // Lily pad boost by bug type
+        if (btype === 'fly') padBoostEnd = Date.now() + 7000;
+        else if (btype === 'firefly') padBoostEnd = Date.now() + 5000;
+      }
+    }
+    if (f.tongueProg >= 1) f.tonguePhase = 'in';
+  } else if (f.tonguePhase === 'in') {
+    f.tongueProg -= 0.16;
+    if (f.tongueProg <= 0) { f.tongueProg = 0; f.tonguePhase = 'idle'; f.tongueTarget = null; }
+  }
+  // Blink
+  f.blinkTimer += 1/60;
+  if (!f.blinking && f.blinkTimer > 2.5 + Math.random() * 4) {
+    f.blinking = true; f.blinkFrame = 0; f.blinkTimer = 0;
+  }
+  if (f.blinking) {
+    f.blinkFrame++;
+    if (f.blinkFrame > 9) { f.blinking = false; f.blinkFrame = 0; }
+  }
+}
+
+function frogJump() {
+  const f = frog;
+  if (!f.grounded || f.dead || !f.charging) return;
+  const jumpMult  = Date.now() < jumpBoostEnd  ? 1.38 : 1;
+  const speedMult = Date.now() < speedBoostEnd ? 1.38 : 1;
+  const power = POW_MIN + f.charge * POW_RNG;
+  f.vx = power * VX_RATIO * speedMult;
+  f.vy = -power * jumpMult;
+  // If the pad we're leaving is still in yellow warning zone, reset it — it shouldn't sink just because we were on it
+  if (curPad >= 0 && pads[curPad] && pads[curPad].st === 1) {
+    pads[curPad].st = 0; pads[curPad].t = 0;
+  }
+  f.grounded = false; f.charging = false; f.charge = 0;
+  f.balancing = false; f.balanceT = 0;
+  f.onIce = false; frozenDamageTimer = 0;
+  f.sqX = 0.6; f.sqY = 1.5;
+  playJump();
+}
+
+// ── Lives / damage ────────────────────────────
+function takeDamage(type) {
+  if (Date.now() < spawnGraceUntil) return; // 1.5s spawn grace
+  if (frame < invincibleUntil) return; // already invincible
+  lastDamageType = type;
+  lives--;
+  playDamage();
+  if (lives <= 0) {
+    lives = 0;
+    if (!secondChanceUsed && lilyPadsBalance >= 20) {
+      // Player can buy second chance — defer actual death, show buy prompt
+      // Set lives to 0 and flag gs='secondchance' temporarily via a flag
+      frog.secondChancePending = true;
+    }
+    deathType = type; deathFrame = frame;
+    frog.dead = true; gs = 'dead'; gameEndTime = Date.now();
+    if (type === 'water') {
+      const fallVy = frog.vy;
+      frog.y = WATER_Y; frog.vx = 0; frog.vy = 0;
+      waterHitSX = frog.x - camX;
+      spark(frog.x, WATER_Y, 'splash');
+      playSplash(fallVy);
+    } else if (type === 'sink') {
+      playSink();
+    } else if (type === 'lava') {
+      spark(frog.x, frog.y, 'land');
+    } else if (type === 'ice') {
+      // freeze death
+    }
+    pickDeathPhrase();
+    if (score > best) { best = score; isNewBest = true; saveProgress(); }
+  } else {
+    // Respawn at the last non-sinking pad
+    invincibleUntil = frame + 90;
+    let respawnPad = curPad;
+    while (respawnPad > 0 && pads[respawnPad].st >= 2) respawnPad--;
+    const rp = pads[respawnPad];
+    frog.x = rp.x; frog.y = rp.y - 23;
+    frog.vx = 0; frog.vy = 0;
+    frog.grounded = true; frog.dead = false;
+    frog.onIce = false; frozenDamageTimer = 0;
+    curPad = respawnPad;
+  }
+}
+
+// ── Events ────────────────────────────────────
+let gameStartTime = 0; // Date.now() at game start
+let nextEventTime = 0; // Date.now() when next event triggers
+let eventEndTime  = 0; // Date.now() when current event ends
+
+// ── Event ambience ────────────────────────────
+let eventAmbiAC = null;
+function stopEventAmbience() {
+  try {
+    if (eventAmbiAC) {
+      const _ac = eventAmbiAC; eventAmbiAC = null;
+      try { _ac.close(); } catch(e2) {}
+    }
+  } catch(e) { eventAmbiAC = null; }
+}
+function startSpringAmbience() {
+  stopEventAmbience();
+  if (!ambienceOn) return;
+  try {
+    eventAmbiAC = new (window.AudioContext || window.webkitAudioContext)();
+    const ac = eventAmbiAC;
+    // Bright birdsong — rapid high chirps
+    (function springBirds() {
+      if (!eventAmbiAC || eventAmbiAC.state === 'closed') return;
+      const t = ac.currentTime;
+      const n = 3 + Math.floor(Math.random() * 4);
+      const baseF = 1800 + Math.random() * 2200;
+      for (let i = 0; i < n; i++) {
+        const nt = t + i * 0.085;
+        const o = ac.createOscillator(), g = ac.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(baseF * (0.9 + Math.random() * 0.25), nt);
+        o.frequency.linearRampToValueAtTime(baseF * (1.05 + Math.random() * 0.2), nt + 0.06);
+        g.gain.setValueAtTime(0, nt); g.gain.linearRampToValueAtTime(0.04, nt + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.001, nt + 0.08);
+        o.connect(g); g.connect(ac.destination); o.start(nt); o.stop(nt + 0.09);
+      }
+      setTimeout(springBirds, 600 + Math.random() * 1400);
+    })();
+    // Gentle wind rustle
+    (function springWind() {
+      if (!eventAmbiAC || eventAmbiAC.state === 'closed') return;
+      const sr = ac.sampleRate;
+      const buf = ac.createBuffer(1, sr * 1.2, sr);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random()*2-1) * Math.pow(Math.sin(Math.PI * i / d.length), 0.6);
+      const ns = ac.createBufferSource(); ns.buffer = buf;
+      const flt = ac.createBiquadFilter(); flt.type = 'bandpass'; flt.frequency.value = 900; flt.Q.value = 0.5;
+      const g = ac.createGain(); g.gain.value = 0.025;
+      ns.connect(flt); flt.connect(g); g.connect(ac.destination); ns.start();
+      setTimeout(springWind, 1800 + Math.random() * 2400);
+    })();
+    // Bees / buzzing
+    (function bee() {
+      if (!eventAmbiAC || eventAmbiAC.state === 'closed') return;
+      if (Math.random() > 0.45) {
+        const t = ac.currentTime;
+        const o = ac.createOscillator(), g = ac.createGain();
+        o.type = 'sawtooth';
+        const f0 = 200 + Math.random() * 120;
+        o.frequency.setValueAtTime(f0, t);
+        o.frequency.linearRampToValueAtTime(f0 * (0.9 + Math.random() * 0.2), t + 0.4);
+        g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.012, t + 0.05);
+        g.gain.linearRampToValueAtTime(0.008, t + 0.35); g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+        o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.55);
+      }
+      setTimeout(bee, 1200 + Math.random() * 3500);
+    })();
+  } catch(e) {}
+}
+function startWinterAmbience() {
+  stopEventAmbience();
+  if (!ambienceOn) return;
+  try {
+    eventAmbiAC = new (window.AudioContext || window.webkitAudioContext)();
+    const ac = eventAmbiAC;
+    // Low howling wind
+    (function wind() {
+      if (!eventAmbiAC || eventAmbiAC.state === 'closed') return;
+      const t = ac.currentTime;
+      const o = ac.createOscillator(), flt = ac.createBiquadFilter(), g = ac.createGain();
+      o.type = 'sawtooth';
+      const f0 = 55 + Math.random() * 45;
+      o.frequency.setValueAtTime(f0, t);
+      o.frequency.linearRampToValueAtTime(f0 * (0.75 + Math.random() * 0.5), t + 1.8);
+      flt.type = 'highpass'; flt.frequency.value = 200;
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.045, t + 0.25);
+      g.gain.linearRampToValueAtTime(0.028, t + 1.5); g.gain.exponentialRampToValueAtTime(0.001, t + 2.2);
+      o.connect(flt); flt.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 2.3);
+      setTimeout(wind, 1200 + Math.random() * 2000);
+    })();
+    // Ice creak
+    (function creak() {
+      if (!eventAmbiAC || eventAmbiAC.state === 'closed') return;
+      if (Math.random() > 0.55) {
+        const t = ac.currentTime;
+        const o = ac.createOscillator(), g = ac.createGain();
+        o.type = 'sine';
+        const f0 = 380 + Math.random() * 280;
+        o.frequency.setValueAtTime(f0, t);
+        o.frequency.exponentialRampToValueAtTime(f0 * 0.5, t + 0.18);
+        g.gain.setValueAtTime(0.022, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+        o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.25);
+      }
+      setTimeout(creak, 2800 + Math.random() * 5000);
+    })();
+    // Distant blizzard hiss
+    (function hiss() {
+      if (!eventAmbiAC || eventAmbiAC.state === 'closed') return;
+      const sr = ac.sampleRate;
+      const buf = ac.createBuffer(1, sr * 1.5, sr);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random()*2-1) * Math.pow(Math.sin(Math.PI * i / d.length), 0.4);
+      const ns = ac.createBufferSource(); ns.buffer = buf;
+      const flt = ac.createBiquadFilter(); flt.type = 'highpass'; flt.frequency.value = 2800;
+      const g = ac.createGain(); g.gain.value = 0.018;
+      ns.connect(flt); flt.connect(g); g.connect(ac.destination); ns.start();
+      setTimeout(hiss, 2200 + Math.random() * 2800);
+    })();
+  } catch(e) {}
+}
+function startVolcanicAmbience() {
+  stopEventAmbience();
+  if (!ambienceOn) return;
+  try {
+    eventAmbiAC = new (window.AudioContext || window.webkitAudioContext)();
+    const ac = eventAmbiAC;
+    // Deep rumbling
+    (function rumble() {
+      if (!eventAmbiAC || eventAmbiAC.state === 'closed') return;
+      const sr = ac.sampleRate;
+      const buf = ac.createBuffer(1, sr * 2, sr);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random()*2-1) * Math.pow(Math.sin(Math.PI * i / d.length), 0.5) * 0.7;
+      const ns = ac.createBufferSource(); ns.buffer = buf;
+      const flt = ac.createBiquadFilter(); flt.type = 'lowpass'; flt.frequency.value = 80 + Math.random()*60;
+      const g = ac.createGain(); g.gain.value = 0.12;
+      ns.connect(flt); flt.connect(g); g.connect(ac.destination); ns.start();
+      setTimeout(rumble, 2800 + Math.random() * 2000);
+    })();
+    // Hissing steam vents
+    (function steam() {
+      if (!eventAmbiAC || eventAmbiAC.state === 'closed') return;
+      if (Math.random() > 0.4) {
+        const t = ac.currentTime;
+        const sr = ac.sampleRate;
+        const dur = 0.35 + Math.random() * 0.55;
+        const buf = ac.createBuffer(1, (sr * dur)|0, sr);
+        const d = buf.getChannelData(0);
+        for (let i = 0; i < d.length; i++) d[i] = (Math.random()*2-1) * Math.pow(1 - i/d.length, 0.4);
+        const ns = ac.createBufferSource(); ns.buffer = buf;
+        const flt = ac.createBiquadFilter(); flt.type = 'bandpass'; flt.frequency.value = 1800 + Math.random()*1200; flt.Q.value = 0.6;
+        const g = ac.createGain(); g.gain.value = 0.045;
+        ns.connect(flt); flt.connect(g); g.connect(ac.destination); ns.start(t);
+      }
+      setTimeout(steam, 1400 + Math.random() * 2200);
+    })();
+    // Lava bubble pop
+    (function lavaPop() {
+      if (!eventAmbiAC || eventAmbiAC.state === 'closed') return;
+      if (Math.random() > 0.5) {
+        const t = ac.currentTime;
+        const o = ac.createOscillator(), g = ac.createGain();
+        o.type = 'sine';
+        const f0 = 80 + Math.random() * 60;
+        o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f0 * 0.3, t + 0.14);
+        g.gain.setValueAtTime(0.065, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+        o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.20);
+      }
+      setTimeout(lavaPop, 800 + Math.random() * 1800);
+    })();
+  } catch(e) {}
+}
+
+function startEvent(type) {
+  currentEvent = type;
+  const dur = 75 * 1000; // 75 seconds
+  eventEndTime = Date.now() + dur;
+  // Schedule next event 1-2 minutes after this one ends
+  const cooldown = 60 * 1000;
+  nextEventTime = eventEndTime + cooldown;
+  if (type === 'volcanic') {
+    volcanoX = frog.x + W * 0.8 + Math.random() * W;
+    lavaBombs = []; lavaSpawnTimer = 0;
+    startVolcanicAmbience();
+  } else if (type === 'winter') {
+    startWinterAmbience();
+  } else if (type === 'spring') {
+    startSpringAmbience();
+  }
+}
+
+function endEvent() {
+  stopEventAmbience();
+  currentEvent = null;
+  lavaBombs = [];
+}
+
+function tickEvent() {
+  if (!frog || frog.dead) return;
+  const now = Date.now();
+  // Start event if time reached
+  if (!currentEvent && now >= nextEventTime) {
+    const roll = Math.random();
+    if (roll < 0.15) startEvent('volcanic');
+    else if (roll < 0.57) startEvent('winter');
+    else startEvent('spring');
+  }
+  // End event when time up
+  if (currentEvent && now >= eventEndTime) { endEvent(); return; }
+
+  if (currentEvent === 'volcanic') {
+    lavaSpawnTimer++;
+    if (lavaSpawnTimer >= 180) { // spawn every 3 seconds
+      lavaSpawnTimer = 0;
+      const vsx = volcanoX;
+      const angle = -Math.PI * 0.5 + (Math.random() - 0.5) * 0.9;
+      const spd = 6 + Math.random() * 4;
+      lavaBombs.push({ x: vsx, y: PAD_BASE_Y - 150, vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd, alive: true, r: 8 });
+    }
+    // Tick lava bombs
+    lavaBombs.forEach(lb => {
+      if (!lb.alive) return;
+      lb.vy += GRAVITY * 0.6;
+      lb.x += lb.vx; lb.y += lb.vy;
+      if (lb.y >= WATER_Y) { lb.alive = false; spark(lb.x, WATER_Y, 'splash'); return; }
+      // Hit frog
+      if (frame >= invincibleUntil && Math.hypot(lb.x - frog.x, lb.y - frog.y) < 24) {
+        lb.alive = false;
+        spark(lb.x, lb.y, 'land');
+        takeDamage('lava');
+      }
+    });
+    lavaBombs = lavaBombs.filter(lb => lb.alive || lb.y < WATER_Y + 10);
+  }
+}
+
+function drawLavaBombs() {
+  lavaBombs.forEach(lb => {
+    if (!lb.alive) return;
+    const sx = lb.x - camX;
+    if (sx < -40 || sx > W + 40) return;
+    // Glow
+    const g = ctx.createRadialGradient(sx, lb.y, 0, sx, lb.y, lb.r * 2.5);
+    g.addColorStop(0, 'rgba(255,200,60,0.9)');
+    g.addColorStop(0.5, 'rgba(255,80,10,0.7)');
+    g.addColorStop(1, 'rgba(255,40,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(sx, lb.y, lb.r * 2.5, 0, Math.PI*2); ctx.fill();
+    // Core
+    ctx.fillStyle = '#ffcc40';
+    ctx.beginPath(); ctx.arc(sx, lb.y, lb.r, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#ff6010';
+    ctx.beginPath(); ctx.arc(sx+1, lb.y+1, lb.r * 0.6, 0, Math.PI*2); ctx.fill();
+  });
+}
+
+// ── Particles ──────────────────────────────────
+function spark(x, y, type) {
+  const n = type === 'splash' ? 28 : 12;
+  for (let i = 0; i < n; i++) {
+    const a = type === 'splash' ? -Math.PI + Math.random() * Math.PI : Math.random() * Math.PI * 2;
+    const sp = type === 'splash' ? 2 + Math.random()*7 : 1 + Math.random()*3;
+    parts.push({ x, y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp - (type==='splash' ? 2.5 : 0),
+      r: type === 'splash' ? 3 + Math.random()*5 : 2 + Math.random()*3,
+      c: type === 'splash' ? '#48b0e0' : '#50b050', l: 1, d: 0.024 + Math.random()*0.04 });
+  }
+}
+function tickParts() {
+  parts = parts.filter(p => p.l > 0);
+  parts.forEach(p => {
+    p.x += p.vx; p.y += p.vy; p.vy += 0.22;
+    p.l -= p.d;
+    const sx = p.x - camX;
+    ctx.save(); ctx.globalAlpha = Math.max(0, p.l);
+    ctx.fillStyle = p.c;
+    ctx.beginPath(); ctx.arc(sx, p.y, p.r * p.l, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  });
+}
+
+// ── Water ripples ──────────────────────────────
+function drawWaterRipples(sx, sy) {
+  const elapsed = (frame - deathFrame) / 60;
+  for (let i = 0; i < 4; i++) {
+    const t = elapsed - i * 0.28;
+    if (t <= 0) continue;
+    const prog = Math.min(1, t * 0.72);
+    const a = (1 - prog) * 0.48;
+    if (a <= 0.01) continue;
+    ctx.save(); ctx.globalAlpha = a;
+    ctx.strokeStyle = '#80c8e8'; ctx.lineWidth = 2.5 - prog * 1.2;
+    ctx.beginPath(); ctx.ellipse(sx, sy, prog * 72, prog * 20, 0, 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// ── Bugs ──────────────────────────────────────
+function genBugs() {
+  bugs = [];
+  const last = pads[pads.length - 1];
+  const span = last.x + 400;
+  const flyCount = 10;
+  for (let i = 0; i < flyCount; i++) {
+    const ox = 300 + Math.random() * (span - 300);
+    bugs.push({ type:'fly', alive:true, ox, oy: PAD_BASE_Y - 80 - Math.random()*100,
+      x:0, y:0, phase: Math.random()*Math.PI*2, wingPhase: Math.random()*Math.PI*2 });
+  }
+  for (let i = 0; i < 6; i++) {
+    const ox = 300 + Math.random() * (span - 300);
+    bugs.push({ type:'firefly', alive:true, ox, oy: PAD_BASE_Y - 60 - Math.random()*80,
+      x:0, y:0, phase: Math.random()*Math.PI*2, glowPhase: Math.random()*Math.PI*2, wingPhase:0 });
+  }
+  bugs.forEach(b => { b.x = b.ox + Math.cos(b.phase)*20; b.y = b.oy + Math.sin(b.phase*0.7)*10; });
+}
+function tickBugs() {
+  bugs.forEach(b => {
+    if (!b.alive) return;
+    const spd = b.type === 'fly' ? 0.035 : 0.012;
+    b.phase += spd; b.x = b.ox + Math.cos(b.phase) * 22; b.y = b.oy + Math.sin(b.phase * 0.75) * 11;
+    b.wingPhase += 0.4;
+    if (b.glowPhase !== undefined) b.glowPhase += 0.05;
+  });
+}
+function drawBugs() {
+  bugs.forEach(b => {
+    if (!b.alive) return;
+    const sx = b.x - camX;
+    if (sx < -40 || sx > W + 40) return;
+    // During spring, don't draw regular flies
+    if (currentEvent === 'spring' && b.type === 'fly') return;
+    if (b.type === 'fly') {
+      const wa = Math.abs(Math.sin(b.wingPhase)) * 0.4;
+      ctx.save(); ctx.globalAlpha = 0.55; ctx.fillStyle = '#c8dcff';
+      ctx.beginPath(); ctx.ellipse(sx - 4, b.y - 2, 6, 2.5, -wa, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(sx + 4, b.y - 2, 6, 2.5,  wa, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = '#2a1e10';
+      ctx.beginPath(); ctx.ellipse(sx, b.y, 3, 2, 0, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = '#2a1e10'; ctx.lineWidth = 0.9;
+      ctx.beginPath(); ctx.moveTo(sx-1, b.y+1); ctx.lineTo(sx-4, b.y+5); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(sx+1, b.y+1); ctx.lineTo(sx+4, b.y+5); ctx.stroke();
+    } else {
+      const glow = Math.max(0, Math.sin(b.glowPhase * 2.8) * 0.5 + 0.5);
+      ctx.save(); ctx.globalAlpha = 0.28 + glow * 0.55;
+      const fg = ctx.createRadialGradient(sx, b.y, 0, sx, b.y, 10);
+      fg.addColorStop(0, 'rgba(220,255,80,1)'); fg.addColorStop(1, 'rgba(80,180,20,0)');
+      ctx.fillStyle = fg;
+      ctx.beginPath(); ctx.arc(sx, b.y, 10, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = '#1a2a08';
+      ctx.beginPath(); ctx.ellipse(sx, b.y, 3.5, 2, 0, 0, Math.PI*2); ctx.fill();
+    }
+  });
+}
+
+// ── Background pads (decorative) ──────────────
+let bgPads = [];
+function genBgPads() {
+  bgPads = [];
+  for (let i = 0; i < 18; i++) {
+    bgPads.push({ x: Math.random() * 2400 - 200, y: WATER_Y + 18 + Math.random() * 28,
+      w: 22 + Math.random() * 30, rot: Math.random() * 0.5 - 0.25, alpha: 0.28 + Math.random() * 0.22 });
+  }
+}
+function drawBgPads() {
+  bgPads.forEach(p => {
+    const sx = p.x - camX;
+    if (sx < -100 || sx > W + 100) return;
+    ctx.save(); ctx.globalAlpha = p.alpha; ctx.translate(sx, p.y); ctx.rotate(p.rot);
+    ctx.fillStyle = '#285828';
+    ctx.beginPath(); ctx.ellipse(0, 0, p.w/2, p.w * 0.22, 0, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#1c3c1c'; ctx.lineWidth = 0.7;
+    ctx.beginPath(); ctx.moveTo(0, -p.w * 0.20); ctx.lineTo(0, p.w * 0.20); ctx.stroke();
+    ctx.restore();
+  });
+}
+
+// ── Level generation ──────────────────────────
+function addPadCluster(x, y, spacing) {
+  pads.push(makePad(x, y, 52 + Math.random() * 24));
+  if (Math.random() < 0.35) {
+    const ox = x + spacing * (Math.random() < 0.5 ? -1 : 1) * (0.6 + Math.random() * 0.4);
+    const oy = y + (Math.random() - 0.5) * 48;
+    if (Math.abs(oy - PAD_BASE_Y) < 100) pads.push(makePad(ox, oy, 36 + Math.random() * 18));
+  }
+}
+function genLevel() {
+  pads = [makePad(100, PAD_BASE_Y, 70)];
+  let x = 100, y = PAD_BASE_Y;
+  for (let i = 0; i < 28; i++) {
+    x += 150 + Math.random() * 175;
+    y = PAD_BASE_Y + (Math.random() - 0.5) * 90;
+    addPadCluster(x, y, 35 + Math.random() * 50);
+    x = pads[pads.length - 1].x;
+  }
+}
+function extendLevel() {
+  let x = pads[pads.length - 1].x;
+  let y = pads[pads.length - 1].y;
+  for (let i = 0; i < 14; i++) {
+    x += 150 + Math.random() * 175;
+    y = PAD_BASE_Y + (Math.random() - 0.5) * 90;
+    addPadCluster(x, y, 35 + Math.random() * 50);
+    x = pads[pads.length - 1].x;
+  }
+}
+
+// ── Start game ────────────────────────────────
+function startGame() {
+  score = 0; isNewBest = false; frame = 0; wv = 0;
+  holding = false; curPad = 0;
+  lives = 3; invincibleUntil = 0; lastDamageType = null;
+  secondChanceUsed = false;
+  spawnGraceUntil = Date.now() + 1500;
+  frogOnIce = false; frozenDamageTimer = 0;
+  currentEvent = null; lavaBombs = []; lavaSpawnTimer = 0; snowParts = [];
+  genLevel(); genBgPads(); genBugs(); parts = []; frogTrail = [];
+  jumpBoostEnd = 0; speedBoostEnd = 0; padBoostEnd = 0;
+  deathType = null; deathFrame = 0; waterHitSX = 0;
+  frog = makeFrog(pads[0].x, pads[0].y - 23);
+  camX = frog.x - 170;
+  // Schedule first event 2-4 minutes in
+  gameStartTime = Date.now();
+  nextEventTime = gameStartTime + 60 * 1000;
+  gs = 'play';
+}
+
+// ── HUD ───────────────────────────────────────
+function drawHUD() {
+  // Score box
+  ctx.fillStyle = 'rgba(0,0,0,0.52)';
+  ctx.beginPath(); ctx.roundRect(12, 12, 126, 48, 8); ctx.fill();
+  ctx.fillStyle = '#999'; ctx.font = '11px Arial'; ctx.fillText('LILY PADS', 22, 29);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 22px Arial'; ctx.fillText(score, 22, 52);
+
+  // Lives (hearts)
+  const heartY = 72;
+  for (let i = 0; i < 3; i++) {
+    const hx = 22 + i * 22;
+    if (i < lives) {
+      ctx.font = '16px serif'; ctx.fillText('❤️', hx - 8, heartY);
+    } else {
+      ctx.globalAlpha = 0.25; ctx.font = '16px serif'; ctx.fillText('🖤', hx - 8, heartY); ctx.globalAlpha = 1;
+    }
+  }
+
+  // Lily pad balance (top right)
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.beginPath(); ctx.roundRect(W-122, 12, 110, 34, 8); ctx.fill();
+  ctx.fillStyle = '#80ff80'; ctx.font = 'bold 13px Arial';
+  ctx.textAlign = 'right'; ctx.fillText('🍃 ' + lilyPadsBalance + ' lily pads', W-12, 34); ctx.textAlign = 'left';
+
+  // Time icon
+  const icon = tod > 0.29 && tod < 0.72 ? (tod < 0.50 ? '🌅' : '☀️') : (tod > 0.72 ? '🌆' : '🌙');
+  ctx.font = '14px serif';
+  ctx.textAlign = 'right'; ctx.fillText(icon, W - 12, 55); ctx.textAlign = 'left';
+
+  // Event indicator
+  if (currentEvent) {
+    const evNames = { volcanic:'🌋 VOLCANIC', winter:'❄️ WINTER', spring:'🌸 SPRING' };
+    const evCols  = { volcanic:'#ff6030', winter:'#80c8ff', spring:'#80ff80' };
+    const evText  = evNames[currentEvent] || '';
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.beginPath(); ctx.roundRect(W/2 - 70, 12, 140, 28, 8); ctx.fill();
+    ctx.fillStyle = evCols[currentEvent] || '#fff'; ctx.font = 'bold 13px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(evText, W/2, 31);
+    ctx.textAlign = 'left';
+  }
+
+  // Pad boost indicator
+  const now = Date.now();
+  let boostY = 108;
+  if (now < padBoostEnd) {
+    const secs = ((padBoostEnd - now) / 1000).toFixed(1);
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.beginPath(); ctx.roundRect(12, boostY, 152, 26, 6); ctx.fill();
+    ctx.fillStyle = '#ffe060'; ctx.font = 'bold 11px Arial';
+    ctx.fillText('🍃 2x BOOST  ' + secs + 's', 20, boostY + 17);
+    boostY += 30;
+  }
+  if (now < jumpBoostEnd) {
+    const secs = ((jumpBoostEnd - now) / 1000).toFixed(1);
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.beginPath(); ctx.roundRect(12, boostY, 152, 26, 6); ctx.fill();
+    ctx.fillStyle = '#60aaff'; ctx.font = 'bold 11px Arial';
+    ctx.fillText('⬆ JUMP BOOST  ' + secs + 's', 20, boostY + 17);
+    boostY += 30;
+  }
+  if (now < speedBoostEnd) {
+    const secs = ((speedBoostEnd - now) / 1000).toFixed(1);
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.beginPath(); ctx.roundRect(12, boostY, 152, 26, 6); ctx.fill();
+    ctx.fillStyle = '#ff9030'; ctx.font = 'bold 11px Arial';
+    ctx.fillText('⚡ SPEED BOOST  ' + secs + 's', 20, boostY + 17);
+    boostY += 30;
+  }
+
+  // Balance bar
+  if (frog.balancing && currentEvent !== 'spring') {
+    const frac = frog.balanceT / BALANCE_MAX_T;
+    const col = frac > 0.7 ? '#ff8040' : '#40d0ff';
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath(); ctx.roundRect(W/2 - 55, H - 36, 110, 22, 6); ctx.fill();
+    ctx.fillStyle = col; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('BALANCING  ' + (BALANCE_MAX_T - frog.balanceT).toFixed(0) + 's', W/2, H - 20);
+    ctx.textAlign = 'left';
+  }
+
+  // Frozen timer on ice
+  if (frog.onIce && currentEvent === 'winter') {
+    const sToNext = ((180 - frozenDamageTimer) / 60).toFixed(1);
+    ctx.fillStyle = 'rgba(0,30,60,0.65)';
+    ctx.beginPath(); ctx.roundRect(W/2 - 70, H - 64, 140, 26, 6); ctx.fill();
+    ctx.fillStyle = '#a0e0ff'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('❄️ FREEZING  ' + sToNext + 's', W/2, H - 44); ctx.textAlign = 'left';
+  }
+
+  // JUMP timer
+  if (!frog.balancing) {
+    const cp = pads[curPad], tl = padTimeLeft(cp);
+    const wt = currentEvent === 'spring' ? WARN_T * 2.5 : WARN_T;
+    if (tl < wt * 0.5 && tl > 0) {
+      const pulse = 0.75 + Math.sin(frame * 0.25) * 0.25;
+      ctx.save(); ctx.globalAlpha = pulse;
+      ctx.fillStyle = tl < 0.6 ? '#ff4040' : '#ffa020';
+      ctx.font = 'bold 18px Arial'; ctx.textAlign = 'center';
+      ctx.fillText('JUMP!  ' + tl.toFixed(1) + 's', W/2, 40);
+      ctx.restore(); ctx.textAlign = 'left';
+    }
+  }
+
+  // Control hints (first pad only)
+  if (score === 0) {
+    ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.font = '12px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Hold SPACE to charge — release to leap   |   Q: balance', W/2, H - 18);
+    ctx.textAlign = 'left';
+  }
+}
+
+// ── Toggle helper ─────────────────────────────
+function drawToggle(x, y, on) {
+  ctx.fillStyle = on ? '#30b030' : '#334433';
+  ctx.beginPath(); ctx.roundRect(x, y, 52, 28, 14); ctx.fill();
+  ctx.fillStyle = on ? '#fff' : '#778877';
+  ctx.beginPath(); ctx.arc(on ? x + 38 : x + 14, y + 14, 11, 0, Math.PI * 2); ctx.fill();
+}
+
+// ── Menu phrases ──────────────────────────────
+const MENU_QUOTES = [
+  'How far can you leap?','One pad at a time.','The swamp awaits.',
+  'Ribbit. Charge. Fly.','Every jump counts.','Trust the lily pad.',
+  'The water is patient.','Green means go.','Pads sink. Keep moving.',
+  'Aim for the center.','The swamp remembers.','Jump first, think later.',
+  'Charge it up right.','There is always another pad.','Wind in your face.',
+  'The water is cold.','Sweet spot wins.','Don\'t overthink it.',
+  'Leap of faith.','The fish are watching.','Another run, another chance.',
+  'Stay on the green.','Sink or swim.','Time is a flat lily pad.',
+  'The horizon never ends.','Five stars from the judges.','Higher. Farther. Better.',
+  'Perfect form, wrong landing.','The swamp is home.','Focus. Breathe. Jump.',
+  'Your best awaits.','One more try.','Frogs don\'t give up.',
+  'The pad is calling.','Glory is one jump away.','Hop to it.',
+  'Gravity is just a suggestion.','Light on your feet.','Spring in your step.',
+  'Fly like a frog.','The water stays hungry.','No hesitation.',
+  'Read the wind.','Green dreams.','Patience, then power.',
+  'Release at the peak.','The swamp is watching.','Bold leaps, big scores.',
+  'Commit to the jump.','Every pad earned.','Don\'t look down.',
+  'The gap is shorter than it looks.','Believe in the arc.','Just one more.',
+  'Land clean. Jump clean.','Velocity is life.','The sweet spot awaits.',
+  'Steady. Aim. Release.','Moonlit waters, warm pads.','You got this.',
+  'The fireflies approve.','Swamp champion in the making.','One more jump.',
+  'The horizon is infinite.','Perfect landing incoming.','Almost got it.',
+  'Ribbit if you\'re ready.','No pad left behind.','Make the leap.',
+  'The water will not have you today.','Swing and a hop.','Pure physics.',
+  'The swamp is peaceful.','Trust your arc.','Frogs are made to jump.',
+  'Float like a lily pad.','Launch into legend.','Gap closed.',
+  'The swamp never sleeps.','Eyes on the next pad.','Go further.',
+  'Science says you can make it.','Faith over physics.','Light feet.',
+  'Momentum is your friend.','This jump will be the one.','Stay green.',
+  'The water reflects your potential.','Clear eyes, full charge, can\'t miss.',
+  'Lily pad after lily pad.','Unstoppable amphibian.','On your marks.',
+  'Maximum range. Minimum splash.','You are the frog.','Make it count.',
+  'Another beautiful leap.','Sweet spot or nothing.','Do it for the pads.',
+  'The moon cheers you on.','Pure frog instinct.','Higher ground awaits.',
+  'This is your swamp now.','Run it back.','The legend grows.',
+];
+
+// ── Shop draw ─────────────────────────────────
+function drawShopPage() {
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(0,10,0,0.78)'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = '#3de83d'; ctx.font = 'bold 26px Arial';
+  ctx.fillText('SHOP', W/2, 52);
+  ctx.fillStyle = '#a0ffa0'; ctx.font = 'bold 14px Arial';
+  ctx.fillText('🍃 ' + lilyPadsBalance + ' lily pads', W/2, 76);
+
+  // Section tabs
+  const tabs = [
+    { id:'cosmetics', label:'Cosmetics', x: W/2 - 150 },
+    { id:'trails',    label:'Trails',    x: W/2 - 10  },
+    { id:'secret',    label:'???',       x: W/2 + 102 },
+  ];
+  tabs.forEach(tab => {
+    const active = shopSection === tab.id;
+    ctx.fillStyle = active ? '#2a8a2a' : '#2a3e2a';
+    ctx.beginPath(); ctx.roundRect(tab.x, 88, 128, 30, 8); ctx.fill();
+    ctx.fillStyle = active ? '#fff' : '#c0dcc0'; ctx.font = 'bold 13px Arial';
+    ctx.fillText(tab.label, tab.x + 64, 108);
+  });
+
+  if (shopSection === 'secret') {
+    ctx.fillStyle = '#555'; ctx.font = 'bold 22px Arial';
+    ctx.fillText('Not finished yet', W/2, H/2 - 20);
+    ctx.fillStyle = '#444'; ctx.font = '14px Arial';
+    ctx.fillText('Check back later...', W/2, H/2 + 14);
+    ctx.fillStyle = '#183018';
+    ctx.beginPath(); ctx.roundRect(W/2-70, H-66, 140, 42, 21); ctx.fill();
+    ctx.fillStyle = '#7ac87a'; ctx.font = 'bold 16px Arial';
+    ctx.fillText('BACK', W/2, H-40);
+    ctx.textAlign = 'left'; return;
+  }
+
+  drawFrogPreview(W/2, 170, 2.4, equippedSkin, equippedAccessory);
+
+  // Grid items
+  const items = shopSection === 'cosmetics' ? ACCESSORIES : TRAILS;
+  const scroll = shopSection === 'cosmetics' ? shopScrollCosm : shopScrollTrail;
+  const cols = 3;
+  const cellW = W / cols;
+  const gridTop = 226;
+  const cellH = 90;
+  const visRows = Math.ceil((H - gridTop - 80) / cellH);
+
+  items.forEach((item, idx) => {
+    const col = idx % cols;
+    const row = Math.floor(idx / cols) - scroll;
+    if (row < 0 || row >= visRows) return;
+    const cx = cellW * col + cellW / 2;
+    const cy = gridTop + row * cellH + cellH / 2;
+
+    const owned = shopSection === 'cosmetics'
+      ? ownedAccessories.includes(item.id)
+      : ownedTrails.includes(item.id);
+    const equipped = shopSection === 'cosmetics'
+      ? item.id === equippedAccessory
+      : item.id === equippedTrail;
+    const canBuy = !owned && lilyPadsBalance >= item.cost;
+
+    ctx.fillStyle = equipped ? 'rgba(80,200,80,0.32)' : owned ? 'rgba(255,255,255,0.14)' : canBuy ? 'rgba(255,240,100,0.10)' : 'rgba(0,0,0,0.45)';
+    ctx.beginPath(); ctx.roundRect(cx-68, cy-cellH/2+4, 136, cellH-8, 10); ctx.fill();
+    if (equipped) { ctx.strokeStyle = 'rgba(100,255,100,0.6)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.roundRect(cx-68, cy-cellH/2+4, 136, cellH-8, 10); ctx.stroke(); }
+
+    if (shopSection === 'cosmetics') {
+      drawAccessoryIcon(item.id, cx, cy - 14);
+    } else {
+      // Trail color swatch
+      if (item.id === 'rainbow') {
+        const rh = ['#ff4040','#ff9800','#ffe020','#40cc40','#4088ff','#cc40cc'];
+        rh.forEach((c, ci) => {
+          ctx.fillStyle = c;
+          ctx.beginPath(); ctx.moveTo(cx, cy-14);
+          ctx.arc(cx, cy-14, 12, ci*(Math.PI*2/6), (ci+1)*(Math.PI*2/6));
+          ctx.closePath(); ctx.fill();
+        });
+      } else if (item.id === 'fire') {
+        ['#ff4020','#ff8020','#ffe040'].forEach((c, ci) => {
+          ctx.fillStyle = c;
+          ctx.beginPath(); ctx.arc(cx - 6 + ci*6, cy - 14 + ci*2, 5 - ci, 0, Math.PI*2); ctx.fill();
+        });
+      } else {
+        const tcols = { red:'#ff4040', blue:'#4488ff', green:'#44ee44', yellow:'#ffe040',
+          purple:'#aa44ff', pink:'#ff44cc', orange:'#ff8822' };
+        ctx.fillStyle = tcols[item.id] || '#aaa';
+        ctx.beginPath(); ctx.arc(cx, cy-14, 12, 0, Math.PI*2); ctx.fill();
+      }
+    }
+
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 12px Arial';
+    ctx.fillText(item.label, cx, cy + 8);
+    if (equipped) {
+      ctx.fillStyle = '#80ff80'; ctx.font = 'bold 11px Arial'; ctx.fillText('✓ Equipped', cx, cy + 22);
+    } else if (owned) {
+      ctx.fillStyle = '#bbb'; ctx.font = '11px Arial'; ctx.fillText('Tap to equip', cx, cy + 22);
+    } else {
+      ctx.fillStyle = canBuy ? '#ffe060' : '#888'; ctx.font = '11px Arial';
+      ctx.fillText('🍃 ' + item.cost, cx, cy + 22);
+    }
+  });
+
+  // Scroll arrows
+  const totalRows = Math.ceil(items.length / cols);
+  if (totalRows > visRows) {
+    if (scroll > 0) {
+      ctx.fillStyle = '#5a9a5a'; ctx.font = '20px Arial'; ctx.textAlign = 'center';
+      ctx.fillText('▲', W/2, gridTop - 6);
+    }
+    if (scroll + visRows < totalRows) {
+      ctx.fillStyle = '#5a9a5a'; ctx.font = '20px Arial';
+      ctx.fillText('▼', W/2, H - 80);
+    }
+  }
+
+  ctx.fillStyle = '#183018';
+  ctx.beginPath(); ctx.roundRect(W/2-70, H-66, 140, 42, 21); ctx.fill();
+  ctx.fillStyle = '#7ac87a'; ctx.font = 'bold 16px Arial';
+  ctx.fillText('BACK', W/2, H-40);
+  ctx.textAlign = 'left';
+}
+
+// ── Frogs page ────────────────────────────────
+function drawFrogsPage() {
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(0,10,0,0.78)'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = '#3de83d'; ctx.font = 'bold 26px Arial'; ctx.fillText('YOUR FROGS', W/2, 64);
+  drawFrogPreview(W/2, 152, 2.6, equippedSkin, equippedAccessory);
+  const sk = SKINS.find(s => s.id === equippedSkin) || SKINS[0];
+  ctx.fillStyle = '#80ff80'; ctx.font = '13px Arial'; ctx.fillText('Equipped: ' + sk.label, W/2, 218);
+  ctx.fillStyle = '#aaa'; ctx.font = '12px Arial'; ctx.fillText('🍃 ' + lilyPadsTotal + ' lily pads earned', W/2, 240);
+  ctx.strokeStyle = 'rgba(80,160,80,0.28)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(28, 258); ctx.lineTo(W-28, 258); ctx.stroke();
+  const cols = 4, cellW = W / cols;
+  const gridTop = 264, gridBot = H - 72, cellH = (gridBot - gridTop) / 2;
+  SKINS.forEach((skin, idx) => {
+    const col = idx % cols, row = Math.floor(idx / cols);
+    const cx = cellW * col + cellW / 2;
+    const cy = gridTop + row * cellH + cellH / 2;
+    const owned = lilyPadsTotal >= skin.threshold;
+    const equipped = skin.id === equippedSkin;
+    ctx.fillStyle = equipped ? 'rgba(80,200,80,0.18)' : owned ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.12)';
+    ctx.beginPath(); ctx.roundRect(cx-50, cy-cellH/2+5, 100, cellH-10, 10); ctx.fill();
+    ctx.save(); ctx.globalAlpha = owned ? 1.0 : 0.32;
+    if (skin.id === 'rainbow') {
+      const rCols = ['#ff4040','#ff9800','#ffe020','#40cc40','#4088ff','#cc40cc'];
+      rCols.forEach((c, ci) => {
+        ctx.fillStyle = c; ctx.beginPath(); ctx.moveTo(cx, cy-14);
+        ctx.arc(cx, cy-14, 20, ci*(Math.PI*2/6), (ci+1)*(Math.PI*2/6));
+        ctx.closePath(); ctx.fill();
+      });
+    } else {
+      ctx.fillStyle = skin.body;
+      ctx.beginPath(); ctx.arc(cx, cy-14, 20, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(cx-7, cy-20, 4.5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx+7, cy-20, 4.5, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#222';
+    ctx.beginPath(); ctx.arc(cx-6, cy-19, 2.2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx+8, cy-19, 2.2, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = owned ? '#ddd' : '#555'; ctx.font = '11px Arial'; ctx.fillText(skin.label, cx, cy + 10);
+    if (!owned) {
+      ctx.fillStyle = '#666'; ctx.font = '10px Arial'; ctx.fillText('🍃' + skin.threshold, cx, cy + 24);
+    } else if (equipped) {
+      ctx.fillStyle = '#80ff80'; ctx.font = 'bold 10px Arial'; ctx.fillText('✓ ON', cx, cy + 24);
+    } else {
+      ctx.fillStyle = '#aaa'; ctx.font = '10px Arial'; ctx.fillText('Tap', cx, cy + 24);
+    }
+  });
+  ctx.fillStyle = '#183018';
+  ctx.beginPath(); ctx.roundRect(W/2-70, H-66, 140, 42, 21); ctx.fill();
+  ctx.fillStyle = '#7ac87a'; ctx.font = 'bold 16px Arial'; ctx.fillText('BACK', W/2, H-40);
+  ctx.textAlign = 'left';
+}
+
+// ── Main menu ─────────────────────────────────
+function drawMenu() {
+  ctx.fillStyle = 'rgba(0,7,20,0.78)'; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+
+  if (menuPage === 'main') {
+    const bobY = Math.sin(frame * 0.04) * 4;
+    drawFrogPreview(W/2, 122 + bobY, 2.4, equippedSkin, equippedAccessory);
+    ctx.fillStyle = '#3de83d'; ctx.font = 'bold 80px Arial'; ctx.fillText('LEAP', W/2, 215);
+    const qIdx = Math.floor(frame / 300) % MENU_QUOTES.length;
+    ctx.fillStyle = '#6ab86a'; ctx.font = '14px Arial';
+    ctx.fillText(MENU_QUOTES[qIdx], W/2, 240);
+    ctx.fillStyle = '#2a7a2a';
+    ctx.beginPath(); ctx.roundRect(W/2-90, 262, 180, 48, 24); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 24px Arial'; ctx.fillText('PLAY', W/2, 294);
+    ctx.fillStyle = '#1a3a1a';
+    ctx.beginPath(); ctx.roundRect(W/2-82, 320, 164, 40, 20); ctx.fill();
+    ctx.fillStyle = '#7ae87a'; ctx.font = 'bold 15px Arial'; ctx.fillText('YOUR FROGS', W/2, 346);
+    ctx.fillStyle = '#1a3a1a';
+    ctx.beginPath(); ctx.roundRect(W/2-82, 370, 164, 40, 20); ctx.fill();
+    ctx.fillStyle = '#7ae87a'; ctx.font = 'bold 15px Arial'; ctx.fillText('SHOP', W/2, 396);
+    ctx.fillStyle = '#132013';
+    ctx.beginPath(); ctx.roundRect(W/2-78, 420, 156, 38, 19); ctx.fill();
+    ctx.fillStyle = '#5ac85a'; ctx.font = 'bold 14px Arial'; ctx.fillText('SETTINGS', W/2, 445);
+    if (best > 0) { ctx.fillStyle = '#ffd700'; ctx.font = '14px Arial'; ctx.fillText('Best: ' + best, W/2, 484); }
+    ctx.fillStyle = 'rgba(255,255,255,0.28)'; ctx.font = '12px Arial'; ctx.fillText('Space · Click · Tap', W/2, H - 18);
+
+  } else if (menuPage === 'frogs') {
+    drawFrogsPage(); ctx.textAlign = 'left'; return;
+
+  } else if (menuPage === 'shop') {
+    drawShopPage(); ctx.textAlign = 'left'; return;
+
+  } else {
+    // Settings
+    ctx.fillStyle = 'rgba(0,10,0,0.78)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#3de83d'; ctx.font = 'bold 30px Arial'; ctx.fillText('SETTINGS', W/2, 98);
+    ctx.strokeStyle = 'rgba(80,160,80,0.22)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(40, 118); ctx.lineTo(W - 40, 118); ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#cccccc'; ctx.font = '17px Arial'; ctx.fillText('Sound Effects', 52, 205);
+    ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText('Jumps, landing, splashes', 52, 228);
+    drawToggle(W - 100, 192, sfxOn);
+    ctx.fillStyle = '#cccccc'; ctx.font = '17px Arial'; ctx.fillText('Ambience', 52, 285);
+    ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText('Wind, crickets, birds', 52, 308);
+    drawToggle(W - 100, 272, ambienceOn);
+    ctx.fillStyle = '#183018';
+    ctx.beginPath(); ctx.roundRect(W/2-70, 438, 140, 44, 22); ctx.fill();
+    ctx.fillStyle = '#7ac87a'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('BACK', W/2, 466); ctx.textAlign = 'left';
+  }
+  ctx.textAlign = 'left';
+}
+
+// ── Phrases ───────────────────────────────────
+const SPLASH_PHRASES = [
+  'Missed every pad.','Water: 1. Frog: 0.','The lily pads were a suggestion.',
+  'Right between the pads.','Stuck the landing — in the swamp.','Beautiful form. Wrong target.',
+  'A perfect 10 from the judges.','The fish were waiting.','Gap timing needs work.',
+  'Should have aimed left.','The arc was perfect. The pad was not.',
+  'Momentum did not help here.','Went wide.','Overshot by a whisker.',
+  'The lake is a great catcher.','Almost. Almost. Nope.',
+  'The swamp accepts all donations.','Frog meets water. Water wins.',
+  'Too much power. Not enough pad.','The ripples looked cool though.',
+  'Not quite green.','Gravity had plans.','Wrong zip code.',
+  'The next pad disagreed.','Free dive, unplanned.','Splash percent: 100.',
+  'The gap said no.','Short by a mile.','Long by a mile.',
+  'The water was excited to meet you.','Aim recalibration required.',
+  'Excellent arc. Shame about the landing.','The lake is your home now.',
+  'You flew. Briefly.','Classic overshoot.','Classic undershoot.',
+  'A tribute to physics.','The pads were suggestions.','Wet again.',
+  'The frog has left the pad.','Speed was not the issue. Accuracy was.',
+  'Next time aim for the green thing.','Splash!','Cannonball.',
+  'The fish clapped.','Graceful. Wrong.','Into the deep.',
+  'Swamp level: submerged.','The algae is nice this time of year.',
+  'Water landing unlocked.','The best jumpers fall sometimes.',
+  'Not your best arc.','Left side drift.','Right side drift.',
+  'Centimeters matter.','So close. So wet.','The jump was brave.',
+  'Lesson: pads are not optional.','Frog soup, anyone?','Splash down confirmed.',
+  'The lake grew three sizes today.','Physics: 1. Frog: 0.',
+  'You skipped like a stone.','A dramatic exit.','The swamp disagrees.',
+  'Two feet short.','One inch over.','Sweet jump, wrong pond.',
+  'The moonlight watched.','The fireflies gasped.','A leap to remember.',
+  'Technically a dive.','Cannonball accepted.','The lake was ready.',
+  'Swamp log: frog overboard.','Even the mosquitoes felt bad.',
+  'Airborne. Briefly.','Green dream, blue reality.',
+  'The pad had one job. So did you.','Splash radius: considerable.',
+  'At least it looked cool.','The ripples are beautiful.',
+  'Another for the water.','The lake keeps score too.',
+  'Not bad. Just wet.','The swamp is forgiving. Usually.',
+  'The arc was chef\'s kiss. Wrong place.',
+  'The gap had a last laugh.','Water won this round.',
+  'Strong launch. Questionable aim.','The fish weren\'t expecting company.',
+  'Lily pads: 0. Lake: 1.','Try left.','Try right.','Try not landing in water.',
+  'Perfect form, imperfect target.','The splash was legendary.',
+  'Into the abyss.','Gravity sends its regards.',
+];
+
+const SUNKEN_PHRASES = [
+  'That pad had enough of you.','Stood there too long.','The swamp reclaimed it.',
+  'Patience: 0. Lily pad: gone.','It slowly accepted the water.','Even the pad gave up.',
+  'You watched it happen.','Should have hopped sooner.','Pad sank. So did the run.',
+  'Sometimes pads just leave.','The pad made a quiet exit.',
+  'You both sank together.','The lily pad said goodbye.',
+  'Hesitation is expensive.','The countdown finished before you did.',
+  'Pads wait for no frog.','You saw the warning. Stayed anyway.',
+  'The bog wanted its pad back.','Time expired. Run ended.',
+  'The ring went red. You stayed green.','Held position too long.',
+  'The pad melted into the water.','The swamp repossessed it.',
+  'Patience tested. Pad lost.','Indecision is a slow death.',
+  'The yellow ring wasn\'t a decoration.','Comfort zone: flooded.',
+  'Even the fish saw that coming.','The lily pad took the hint.',
+  'You watched it go. It watched you go too.','Zero urgency. Zero pad.',
+  'The countdown clock doesn\'t negotiate.','The pad said: your time is up.',
+  'Delayed reaction. Maximum consequence.','Waiting never works.',
+  'The swamp runs on a schedule.','The pad retired early.',
+  'That\'s on the clock.','Tick tock.','The bubbles told the story.',
+  'Comfortable? The pad was not.','Lily pads are not permanent.',
+  'Everything sinks eventually.','Standing still is still sinking.',
+  'The next pad was right there.','Opportunity cost: one frog.',
+  'The water was hungry.','It waited. It sank. Lesson: jump.',
+  'Stability is temporary in the swamp.','The pad logged out.',
+  'A slow, dignified descent.','The pad found the bottom.',
+  'Three seconds too long.','One second too long.',
+  'The warning was the warning.','Sank with style.',
+  'The swamp has patience. You needed more.',
+  'Green then gone.','The lily pad\'s final act.',
+  'You outlasted the pad\'s patience.','The timer runs whether you do or not.',
+  'Comfort is a sinking feeling.','The swamp called you home.',
+  'The pad sighed and went under.','Took too long. Paid the price.',
+  'Frogs that wait get wet.','The pad had a schedule.',
+  'One more second would have been fine. You took three.','The circle said hurry.',
+  'The pad has seen enough.','Even the fireflies blinked.',
+  'Last call for jumping.','Boardingcomplete. Pad departed.',
+  'The swamp said checkout time.','You sat. It sank.',
+  'Another peaceful pad, lost to the deep.','The bog was patient. You were not.',
+  'The lily pad gave you fair warning.','That\'s what the ring meant.',
+  'Treading water now.','You and the pad, same depth.',
+  'The pad didn\'t abandon you. Gravity did.',
+  'Slow and steady loses the lily pad.','The pad had one foot in the water already.',
+  'Tick. Tock. Splash.','You felt comfortable. The pad did not.',
+  'Sometimes the clock wins.','The ring went orange. Still waiting?',
+  'Lily pads are temporary. Lessons are not.',
+];
+
+const BURNED_PHRASES = [
+  'The volcano had other plans.','Lava: fast. Frog: not fast enough.',
+  'Fiery farewell.','The magma found you.','Too hot to handle.',
+  'The volcano aims better than expected.','Lava bath unlocked.',
+  'The volcano was not bluffing.','Red ball: dangerous.',
+  'Dodge next time.','The sky had plans.','A heated end.',
+  'Lava wins this round.','The volcano speaks.','Well-done frog.',
+  'The volcano was angry today.','Flying lava, meet stationary frog.',
+  'The magma did not miss.','Burn notice.','Volcanic hospitality.',
+  'The sky rained fire. You stayed.','Lava claimed another.',
+  'The volcano has excellent aim.','Magma does not negotiate.',
+  'You cannot outjump a volcano.','The sky said no.',
+  'Eruption: successful. Frog: not.','The lava had a point.',
+  'The ground is lava. Literally.','A fiery welcome to the underworld.',
+  'The volcano expressed itself.','Magma finds a way.',
+  'Too slow, too glowing.','The lava bomb found the right address.',
+  'Geologically unfortunate.','The frog and the lava met.',
+  'The volcano has no chill.','Red means stop. Didn\'t stop.',
+  'The swamp is hotter than usual.','A warm ending.',
+  'The lava: punctual.','The volcano was having a moment.',
+  'Direct hit from an angry mountain.','Dodging optional. Dying mandatory.',
+  'The sky threw a fireball. It connected.','Lava speed: fast. Frog speed: fast enough?',
+  'The molten rock did not care.','The volcano erupted. You did not dodge.',
+  'Heat death, literal edition.','The lava ball had momentum.',
+  'Evasive action not taken.','The volcano wins this round.',
+  'Scorched earth. Scorched frog.','The eruption was well-timed.',
+  'Hot stuff, literally.','The lava found its mark.',
+  'Volcanic precision: 100%.','The air smells like burnt lily pad.',
+  'The mountain expressed dissatisfaction.','Fireballed into history.',
+  'You saw it coming. You stayed.','The volcano is patient and accurate.',
+  'Lava follows the schedule.','A perfectly thrown fireball.',
+  'The magma flow is precise.','Heat seeker missile: frog edition.',
+  'The volcano does not miss twice.','Did not dodge. Did die.',
+  'Molten greeting received.','The hot rock found a home.',
+  'The volcano cheered. You didn\'t.','Eruption aimed. Connected.',
+  'The lava ball was on time.','Geothermal event: successful.',
+  'Too close to the volcano.','The mountain rained fire. You rained regret.',
+  'The magma had your name on it.','Volcanic accuracy unlocked.',
+  'That fireball was personal.','The volcano turned up the heat.',
+  'Lava speed exceeded frog speed.','The eruption was perfectly timed.',
+  'The fireball had one job.','Dodge rating: zero.',
+  'The volcano kept its promise.','Red hot ending.',
+  'Magma trajectory: frog.','Another one claimed by the volcano.',
+];
+
+const FROZEN_PHRASES = [
+  'Stood on ice too long.','The frost found you.','Cold: 1. Frog: 0.',
+  'Frozen solid.','Should have jumped.','The ice kept its promise.',
+  'The chill took over.','Too cold to continue.','Iced out.',
+  'The winter event disagreed with you.','The lake froze. So did you.',
+  'Hypothermia wins.','The ice was patient.','Stood still, froze still.',
+  'Three seconds too many on the ice.','The cold came for you.',
+  'Winter found a frog.','The temperature wins.','Froze in place.',
+  'The ice is not your friend.','Cold feet, cold everything.',
+  'The freeze was gradual. The end was not.','The winter event delivers.',
+  'The frozen lake was a trap.','Looked cool. Was cool. Too cool.',
+  'Ice: beautiful and deadly.','The frost settles in.',
+  'Should have leaped sooner.','The cold lake had other plans.',
+  'One more second would have been too many.','The ice won.',
+  'Stayed too long in the frozen world.','A cold conclusion.',
+  'The winter did what winter does.','Frog: frozen. Run: over.',
+  'The ice had a timer. You ignored it.','Frosted frog.',
+  'The snowflakes were warnings.','The cold is efficient.',
+  'The frozen surface is unforgiving.','A chilly departure.',
+  'Ice is not a home.','The freeze came for you.',
+  'Three seconds on ice. That\'s three too many.','The winter event claims another.',
+  'The frozen lake has rules.','You forgot the rules.',
+  'The cold does not wait.','Warm heart, frozen frog.',
+  'The ice sheet had patience.','The winter arrived on schedule.',
+  'Icicle ending.','The frost was thorough.',
+  'The frozen world has limits.','The cold outlasted you.',
+  'Temperature: fatal.','The lake remembered it was winter.',
+  'A slow freeze.','The chill set in.',
+  'The lake said: you\'ve been here long enough.','Cracked the ice. Broke the run.',
+  'The snowflakes celebrate.','Too cold for a comeback.',
+  'The ice accepted you. Permanently.','Winter claimed its prize.',
+  'You and the ice had a disagreement.','The frozen lake won the argument.',
+  'The cold does not care about scores.','Iced and done.',
+  'One second on ice too many.','The frost was well-timed.',
+  'The winter event has no mercy.','A glacial ending.',
+  'The frozen lake delivers consequences.','Ice cold, literally.',
+  'The chill reached your core.','The winter said: stay longer. You did.',
+  'Frostbitten.','The ice had a plan. You weren\'t in it.',
+  'The winter does not negotiate.','The cold came quickly.',
+  'Frozen in time.','The ice claimed the run.',
+  'The winter event: undefeated.','A perfectly timed freeze.',
+  'The lake said enough.','Cold case: closed.',
+  'The frost arrived on schedule.','The ice remembers.',
+];
+
+const WIN_PHRASES = [
+  'You crossed 30 pads. The swamp is yours.','The lily pads bow to you.',
+  'Swamp champion.','Unstoppable frog energy.','30 pads. Legendary.',
+  'The water never got you.','Frog of the year.','The swamp has a new ruler.',
+  'Every pad, conquered.','A masterclass in leaping.',
+  'Thirty and counting.','The fish applaud.','The fireflies salute.',
+  'You made it look easy.','Pure amphibian excellence.',
+  'The gap was never a problem.','30 pads of perfection.',
+  'The swamp bows down.','Maximum frog.','All green, no blue.',
+  'The lily pads held on for you.','The volcano couldn\'t stop you.',
+  'Even the winter bowed.','Spring, summer, fall — you leaped through all.',
+  'Thirty pads of glory.','The moon shines brighter tonight.',
+  'The swamp will remember this.','Untouchable.',
+  'Not a single splash.','Defied gravity, repeatedly.',
+  'The frog has ascended.','30 pads — and counting.',
+  'The lake never got a chance.','Pure form, pure score.',
+  'No pad was too far.','The trajectory was always perfect.',
+  'Sweet spot, every time.','The gap closed before you blinked.',
+  'The swamp champion has returned.','Thirty. Count them.',
+  'Flawless amphibian.','The legend grows.',
+  'The lily pads cheered you on.','The water got none of you.',
+  'Gravity was merely a suggestion.','The pads were honored.',
+  'The arc of triumph.','Nothing stopped you.',
+  'The volcano tried. Failed.','The ice tried. Failed.',
+  'Spring made it easier. You made it perfect.',
+  '30 pads and not a drop of water.','Clean runs only.',
+  'The swamp has never seen such leaping.','Absolute domination.',
+  'You make it look effortless.','The record books open.',
+  'The fireflies line the way.','Maximum frog achieved.',
+  'From the first pad to the thirtieth — flawless.',
+  'The power bar was always perfect.','30 pads, zero regrets.',
+  'A run for the history books.','The gap was never real.',
+  'You see pads. You reach pads. Always.',
+  'The swamp is proud.','Lily pad royalty.',
+  'The water watched from below.','Perfection in green.',
+  'The bugs couldn\'t distract you.','Every jump, every landing.',
+  'The moon guided you home.','The swamp is quiet. It is in awe.',
+  'Thirty pads. One frog. Infinite glory.',
+  'The legend of the swamp grows.','Champion confirmed.',
+  'The leaping never stopped.','30 times you landed perfect.',
+  'The water saw everything.','Zero splashes. All pads.',
+  'You are the lily pad.','The frog rises.',
+  'The swamp has a new story.','30 pads. Nothing less.',
+  'The best run this swamp has ever seen.',
+  'You moved like water should.','Pure instinct.',
+  'The sky watched you fly.','30 and beyond.',
+  'The lily pads will remember.','Frog: victorious.',
+];
+
+let deathPhraseIdx = 0;
+function pickDeathPhrase() {
+  let pool;
+  if (deathType === 'water') pool = SPLASH_PHRASES;
+  else if (deathType === 'sink') pool = SUNKEN_PHRASES;
+  else if (deathType === 'lava') pool = BURNED_PHRASES;
+  else pool = FROZEN_PHRASES;
+  deathPhraseIdx = Math.floor(Math.random() * pool.length);
+}
+
+// ── Death / Win screens ───────────────────────
+function drawOver() {
+  ctx.fillStyle = 'rgba(0,0,16,0.82)'; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+
+  if (score >= WIN && isNewBest) {
+    // Win celebration
+    ctx.fillStyle = '#ffd700'; ctx.font = 'bold 56px Arial';
+    ctx.fillText('WIN!', W/2, 180);
+    ctx.fillStyle = '#aaa'; ctx.font = '17px Arial';
+    const winPhrase = WIN_PHRASES[deathPhraseIdx % WIN_PHRASES.length];
+    ctx.fillText(winPhrase, W/2, 218);
+  } else {
+    const configs = {
+      water: { heading:'SPLASH!', col:'#ff4848', pool: SPLASH_PHRASES },
+      sink:  { heading:'SUNKEN!', col:'#4ab8ff', pool: SUNKEN_PHRASES },
+      lava:  { heading:'BURNED!', col:'#ff7720', pool: BURNED_PHRASES },
+      ice:   { heading:'FROZEN!', col:'#80d0ff', pool: FROZEN_PHRASES },
+    };
+    const cfg = configs[deathType] || configs.water;
+    ctx.fillStyle = cfg.col; ctx.font = 'bold 46px Arial'; ctx.fillText(cfg.heading, W/2, 200);
+    ctx.fillStyle = '#aaa'; ctx.font = '17px Arial';
+    ctx.fillText(cfg.pool[deathPhraseIdx % cfg.pool.length], W/2, 238);
+  }
+
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 24px Arial'; ctx.fillText('Score: ' + score, W/2, 290);
+  if (isNewBest && score > 0) {
+    ctx.fillStyle = '#ffd700'; ctx.font = '17px Arial'; ctx.fillText('🏆  New Best!', W/2, 322);
+  }
+
+  // Second chance offer
+  if (frog && frog.secondChancePending && !secondChanceUsed && lilyPadsBalance >= 20) {
+    ctx.fillStyle = 'rgba(180,130,0,0.92)';
+    ctx.beginPath(); ctx.roundRect(W/2 - 110, 330, 220, 52, 14); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 17px Arial';
+    ctx.fillText('SECOND CHANCE', W/2, 355);
+    ctx.fillStyle = '#ffe080'; ctx.font = '14px Arial';
+    ctx.fillText('Spend 20🍃 to keep going', W/2, 375);
+    ctx.fillStyle = '#346034';
+    ctx.beginPath(); ctx.roundRect(W/2-90, 398, 180, 52, 26); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px Arial'; ctx.fillText('TRY AGAIN', W/2, 432);
+    ctx.fillStyle = '#1a2e1a';
+    ctx.beginPath(); ctx.roundRect(W/2-80, 462, 160, 40, 20); ctx.fill();
+    ctx.fillStyle = '#9de89d'; ctx.font = '15px Arial'; ctx.fillText('Return to menu', W/2, 488);
+  } else {
+    ctx.fillStyle = '#346034';
+    ctx.beginPath(); ctx.roundRect(W/2-90, 350, 180, 52, 26); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px Arial'; ctx.fillText('TRY AGAIN', W/2, 384);
+    ctx.fillStyle = '#1a2e1a';
+    ctx.beginPath(); ctx.roundRect(W/2-80, 416, 160, 40, 20); ctx.fill();
+    ctx.fillStyle = '#9de89d'; ctx.font = '15px Arial'; ctx.fillText('Return to menu', W/2, 442);
+  }
+
+  const elapsed = Date.now() - gameEndTime;
+  const remaining = Math.max(0, (AUTO_MENU_DELAY - elapsed) / 1000);
+  if (remaining < 5 && remaining > 0) {
+    ctx.fillStyle = `rgba(180,180,180,${0.5 + 0.5 * Math.sin(frame * 0.18)})`;
+    ctx.font = '12px Arial';
+    ctx.fillText('Returning to menu in ' + remaining.toFixed(0) + 's...', W/2, H - 20);
+  }
+  ctx.textAlign = 'left';
+}
+
+// ── Input helpers ─────────────────────────────
+function inRect(x, y, rx, ry, rw, rh) { return x >= rx && x <= rx + rw && y >= ry && y <= ry + rh; }
+function canvasXY(e) {
+  const r = C.getBoundingClientRect();
+  const src = e.touches && e.touches.length ? e.touches[0] : e;
+  const cx = src.clientX !== undefined ? src.clientX : e.clientX;
+  const cy = src.clientY !== undefined ? src.clientY : e.clientY;
+  return [(cx - r.left) * (W / r.width), (cy - r.top) * (H / r.height)];
+}
+
+function press(px = W/2, py = H/2) {
+  resumeAC(); startAmbience();
+
+  if (gs === 'menu') {
+    if (menuPage === 'main') {
+      if (inRect(px, py, W/2-90, 262, 180, 48)) { startGame(); return; }
+      if (inRect(px, py, W/2-82, 320, 164, 40)) { menuPage = 'frogs'; return; }
+      if (inRect(px, py, W/2-82, 370, 164, 40)) { menuPage = 'shop'; return; }
+      if (inRect(px, py, W/2-78, 420, 156, 38)) { menuPage = 'settings'; return; }
+
+    } else if (menuPage === 'frogs') {
+      if (inRect(px, py, W/2-70, H-66, 140, 42)) { menuPage = 'main'; return; }
+      const cols = 4, cellW = W/cols;
+      const gridTop = 264, gridBot = H-72, cellH = (gridBot-gridTop)/2;
+      const col = Math.floor(px / cellW), row = Math.floor((py - gridTop) / cellH);
+      if (row >= 0 && row < 2 && col >= 0 && col < 4) {
+        const idx = row*4 + col;
+        if (idx < SKINS.length && skinOwned(SKINS[idx].id)) {
+          equippedSkin = SKINS[idx].id; saveProgress();
+        }
+      }
+      return;
+
+    } else if (menuPage === 'shop') {
+      if (inRect(px, py, W/2-70, H-66, 140, 42)) { menuPage = 'main'; shopScrollCosm = 0; shopScrollTrail = 0; return; }
+      // Tab click
+      const tabHits = [
+        { id:'cosmetics', x:W/2-150, w:128 },
+        { id:'trails', x:W/2-10, w:128 },
+        { id:'secret', x:W/2+102, w:128 },
+      ];
+      for (const tab of tabHits) {
+        if (inRect(px, py, tab.x, 88, tab.w, 30)) { shopSection = tab.id; return; }
+      }
+      if (shopSection === 'secret') return;
+
+      const items = shopSection === 'cosmetics' ? ACCESSORIES : TRAILS;
+      const scroll = shopSection === 'cosmetics' ? shopScrollCosm : shopScrollTrail;
+      const cols = 3, cellW = W / cols;
+      const gridTop = 226, cellH = 90;
+      const visRows = Math.ceil((H - gridTop - 80) / cellH);
+
+      // Scroll arrows
+      const totalRows = Math.ceil(items.length / cols);
+      if (totalRows > visRows) {
+        if (inRect(px, py, W/2-30, gridTop-20, 60, 20)) {
+          if (shopSection === 'cosmetics') shopScrollCosm = Math.max(0, shopScrollCosm - 1);
+          else shopScrollTrail = Math.max(0, shopScrollTrail - 1);
+          return;
+        }
+        if (inRect(px, py, W/2-30, H-92, 60, 20)) {
+          const maxScroll = totalRows - visRows;
+          if (shopSection === 'cosmetics') shopScrollCosm = Math.min(maxScroll, shopScrollCosm + 1);
+          else shopScrollTrail = Math.min(maxScroll, shopScrollTrail + 1);
+          return;
+        }
+      }
+
+      const col = Math.floor(px / cellW);
+      const rowRaw = Math.floor((py - gridTop) / cellH);
+      const idx = (rowRaw + scroll) * cols + col;
+
+      if (rowRaw < 0 || rowRaw >= visRows || col < 0 || col >= cols || idx < 0 || idx >= items.length) return;
+      const item = items[idx];
+      if (shopSection === 'cosmetics') {
+        const owned = ownedAccessories.includes(item.id);
+        if (owned) {
+          equippedAccessory = equippedAccessory === item.id ? null : item.id; saveProgress();
+        } else if (lilyPadsBalance >= item.cost) {
+          lilyPadsBalance -= item.cost; ownedAccessories.push(item.id); equippedAccessory = item.id; saveProgress();
+        }
+      } else {
+        const owned = ownedTrails.includes(item.id);
+        if (owned) {
+          equippedTrail = equippedTrail === item.id ? null : item.id; saveProgress();
+        } else if (lilyPadsBalance >= item.cost) {
+          lilyPadsBalance -= item.cost; ownedTrails.push(item.id); equippedTrail = item.id; saveProgress();
+        }
+      }
+      return;
+
+    } else {
+      if (inRect(px, py, 0, 180, W, 60)) { sfxOn = !sfxOn; return; }
+      if (inRect(px, py, 0, 255, W, 60)) {
+        ambienceOn = !ambienceOn;
+        if (AmbiAC) { if (ambienceOn) AmbiAC.resume(); else AmbiAC.suspend(); }
+        if (!ambienceOn) stopEventAmbience();
+        return;
+      }
+      if (inRect(px, py, W/2-70, 438, 140, 44)) { menuPage = 'main'; return; }
+    }
+    return;
+  }
+
+  if (gs !== 'play') {
+    const elapsed = Date.now() - gameEndTime;
+    if (inRect(px, py, W/2-80, 416, 160, 40)) { gs='menu'; menuPage='main'; return; }
+    const btnY = (frog && frog.secondChancePending && !secondChanceUsed && lilyPadsBalance >= 20) ? 398 : 350;
+    if (elapsed > RESTART_DELAY && inRect(px, py, W/2-90, btnY, 180, 52)) { startGame(); return; }
+    if (elapsed > RESTART_DELAY && !inRect(px, py, W/2-80, btnY + 66, 160, 40)) { startGame(); return; }
+    return;
+  }
+
+  // Second chance: tap anywhere during dead+secondChancePending
+  if (gs === 'dead' && frog && frog.secondChancePending && !secondChanceUsed && lilyPadsBalance >= 20) {
+    if (inRect(px, py, W/2 - 110, 330, 220, 52)) {
+      lilyPadsBalance -= 20; secondChanceUsed = true;
+      frog.secondChancePending = false;
+      lives = 1; frog.dead = false; gs = 'play';
+      spawnGraceUntil = Date.now() + 1500;
+      invincibleUntil = frame + 120;
+      // Respawn on last safe pad
+      let respawnPad = curPad;
+      while (respawnPad > 0 && pads[respawnPad].st >= 2) respawnPad--;
+      const rp = pads[respawnPad];
+      frog.x = rp.x; frog.y = rp.y - 23;
+      frog.vx = 0; frog.vy = 0; frog.grounded = true; frog.onIce = false;
+      curPad = respawnPad; saveProgress(); return;
+    }
+  }
+
+  holding = true;
+  if (frog.grounded && !frog.dead && !frog.balancing) frog.charging = true;
+}
+
+function release() {
+  if (gs !== 'play' || !holding) return;
+  holding = false; frogJump();
+}
+
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' && !e.repeat) {
+    e.preventDefault();
+    if (gs === 'menu' && menuPage === 'main') { resumeAC(); startAmbience(); startGame(); return; }
+    press();
+  }
+  if (e.code === 'KeyQ' && !e.repeat && gs === 'play') {
+    const f = frog;
+    if (f.grounded && !f.dead) { f.balancing = !f.balancing; if (!f.balancing) f.balanceT = 0; }
+  }
+});
+document.addEventListener('keyup', e => { if (e.code === 'Space') { e.preventDefault(); release(); } });
+C.addEventListener('mousedown', e => { const [x, y] = canvasXY(e); press(x, y); });
+C.addEventListener('mouseup', release);
+C.addEventListener('mousemove', e => { const [x, y] = canvasXY(e); cursorWX = x + camX; cursorWY = y; });
+C.addEventListener('touchstart', e => { e.preventDefault(); const [x, y] = canvasXY(e); press(x, y); }, { passive: false });
+C.addEventListener('touchend', e => { e.preventDefault(); release(); }, { passive: false });
+
+// ── Main loop ─────────────────────────────────
+function loop() {
+  requestAnimationFrame(loop);
+  frame++; wv++; tod = (tod + TOD_SPEED) % 1;
+  drawBG();
+
+  if (gs === 'play') {
+    pads.forEach(padTick);
+    frogTick();
+    tickParts();
+    tickBugs();
+    tickEvent();
+    camX += (frog.x - 170 - camX) * 0.07;
+
+    // Trail update
+    if (equippedTrail) {
+      frogTrail.push({ x: frog.x, y: frog.y });
+      if (frogTrail.length > 30) frogTrail.shift();
+    } else { frogTrail = []; }
+
+    // Landing detection
+    if (!frog.grounded && !frog.dead && frog.vy > 0) {
+      const padW = currentEvent === 'spring' ? 1.4 : 1;
+      // Normal pads
+      for (let i = curPad + 1; i < Math.min(curPad + 5, pads.length); i++) {
+        const p = pads[i];
+        if (p.st === 3) continue;
+        if (Math.abs(frog.x - p.x) <= (p.w * padW)/2 - 5 &&
+            frog.y >= p.y - 22 && frog.y <= p.y + 8) {
+          frog.grounded = true; frog.vy = 0; frog.vx = 0;
+          frog.sqY = 0.48; frog.sqX = 1.55;
+          frog.y = p.y - 23; frog.onIce = false;
+          curPad = i; score++;
+          const padMult = Date.now() < padBoostEnd ? 2 : 1;
+          lilyPadsTotal += padMult; lilyPadsBalance += padMult;
+          saveProgress();
+          spark(frog.x, frog.y, 'land');
+          playLand();
+          padActivate(p);
+          if (curPad >= pads.length - 8) extendLevel();
+          // ~10% random heart loss on landing
+          if (Math.random() < 0.10 && Date.now() >= spawnGraceUntil) takeDamage('pad');
+          // Win check
+          if (score >= WIN && !isNewBest) {
+            if (score > best) { best = score; isNewBest = true; }
+            gamesWon++;
+            if (WIN < 100) WIN = Math.min(100, 30 + (gamesWon - 1) * 10);
+            else WIN = Infinity; // endless after reaching 100
+            saveProgress();
+            deathType = 'water'; deathFrame = frame;
+            frog.dead = true; gs = 'dead'; gameEndTime = Date.now();
+            deathPhraseIdx = Math.floor(Math.random() * WIN_PHRASES.length);
+          }
+          break;
+        }
+      }
+      // Ice landing (winter event)
+      if (!frog.grounded && currentEvent === 'winter' && frog.y >= WATER_Y - 4 && frog.y <= WATER_Y + 8) {
+        frog.grounded = true; frog.vy = 0; frog.vx = 0;
+        frog.sqY = 0.55; frog.sqX = 1.4;
+        frog.y = WATER_Y - 2;
+        frog.onIce = true; frozenDamageTimer = 0;
+        spark(frog.x, WATER_Y, 'land');
+        playLand();
+        if (score >= WIN && !isNewBest) {
+          if (score > best) { best = score; isNewBest = true; }
+          gamesWon++; if (WIN < 100) WIN = Math.min(100, 30 + (gamesWon-1)*10); else WIN = Infinity;
+          saveProgress(); deathType = 'water'; deathFrame = frame;
+          frog.dead = true; gs = 'dead'; gameEndTime = Date.now();
+          deathPhraseIdx = Math.floor(Math.random() * WIN_PHRASES.length);
+        }
+      }
+    }
+
+    // Sunk pad death
+    if (frog.grounded && !frog.onIce && curPad >= 0 && pads[curPad].st === 3) {
+      if (frame >= invincibleUntil) {
+        takeDamage('sink');
+      }
+    }
+
+    // Water hit (missed all pads and not on ice)
+    if (!frog.grounded && !frog.dead && frog.y >= WATER_Y && currentEvent !== 'winter') {
+      if (frame >= invincibleUntil) {
+        takeDamage('water');
+      } else {
+        // Bounce back up when invincible
+        frog.y = WATER_Y - 4; frog.vy = -4;
+      }
+    }
+
+    // Draw world
+    drawBgPads();
+    pads.forEach(drawPad);
+    if (currentEvent === 'volcanic') drawLavaBombs();
+    drawBugs();
+    tickParts();
+    drawTrail();
+    drawFrog();
+    drawHUD();
+
+  } else if (gs === 'menu') {
+    drawMenu();
+  } else {
+    // Dead / win state
+    if (Date.now() - gameEndTime > AUTO_MENU_DELAY) { gs = 'menu'; menuPage = 'main'; }
+    if (bgPads) drawBgPads();
+    if (pads) { pads.forEach(drawPad); }
+    tickParts();
+    if (frog) {
+      if (deathType === 'water') {
+        frog.y = Math.min(frog.y + 3.5, WATER_Y + 62);
+        drawWaterRipples(waterHitSX, WATER_Y);
+        ctx.save();
+        ctx.beginPath(); ctx.rect(0, 0, W, WATER_Y + 6); ctx.clip();
+        drawFrog(); ctx.restore();
+      } else { frogTick(); drawFrog(); }
+    }
+    drawOver();
+  }
+}
+
+gs = 'menu';
+loop();
+
+</script>
+
+</body>
+</html>
