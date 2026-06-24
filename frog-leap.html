@@ -8,26 +8,328 @@
 * { margin:0; padding:0; box-sizing:border-box; touch-action:none; }
 html, body {
   width:100%; height:100%; overflow:hidden;
-  /* Swamp gradient matches the game's background so side bars blend in */
   background: radial-gradient(ellipse at 50% 40%, #0d1f0d 0%, #050e05 60%, #020508 100%);
 }
 body { display:flex; justify-content:center; align-items:center; }
 canvas {
   display:block;
-  /* Fill full height, auto width preserves ratio — sides are "more swamp" */
   height: 100vh;
   width: auto;
   max-width: 100vw;
+}
+/* ── Auth overlay ──────────────────────────── */
+#auth-overlay {
+  position: fixed; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(ellipse at 50% 40%, #0a1a0a 0%, #030903 60%, #010305 100%);
+  z-index: 999;
+}
+#auth-overlay.hidden { display: none; }
+#auth-box {
+  background: rgba(4,18,4,0.96);
+  border: 1.5px solid #1e5a1e;
+  border-radius: 20px;
+  padding: 36px 38px 32px;
+  width: min(340px, 90vw);
+  font-family: Arial, sans-serif;
+  box-shadow: 0 0 60px rgba(40,160,40,0.12);
+}
+#auth-logo {
+  text-align: center;
+  font-size: 38px;
+  font-weight: 900;
+  color: #3de83d;
+  letter-spacing: 3px;
+  margin-bottom: 4px;
+}
+#auth-subtitle {
+  text-align: center;
+  color: #4a8a4a;
+  font-size: 13px;
+  margin-bottom: 22px;
+}
+#auth-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 22px;
+}
+#auth-tabs button {
+  flex: 1;
+  padding: 9px 0;
+  border: 1.5px solid #1e5a1e;
+  border-radius: 12px;
+  background: transparent;
+  color: #5a9a5a;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: Arial, sans-serif;
+}
+#auth-tabs button.active {
+  background: #1a5a1a;
+  color: #80ff80;
+  border-color: #2a8a2a;
+}
+#auth-box input {
+  width: 100%;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  background: rgba(20,50,20,0.7);
+  border: 1.5px solid #1e5a1e;
+  border-radius: 11px;
+  color: #c8f0c8;
+  font-size: 15px;
+  font-family: Arial, sans-serif;
+  outline: none;
+  transition: border-color 0.15s;
+}
+#auth-box input:focus { border-color: #3ab03a; }
+#auth-box input::placeholder { color: #3a6a3a; }
+#auth-err {
+  min-height: 20px;
+  color: #ff6060;
+  font-size: 13px;
+  text-align: center;
+  margin-bottom: 10px;
+}
+#auth-submit {
+  width: 100%;
+  padding: 13px;
+  background: #1e7a1e;
+  border: none;
+  border-radius: 14px;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: Arial, sans-serif;
+  transition: background 0.15s;
+}
+#auth-submit:hover { background: #2a9a2a; }
+#auth-submit:disabled { background: #1a4a1a; color: #4a7a4a; cursor: default; }
+#auth-footer {
+  text-align: center;
+  color: #3a6a3a;
+  font-size: 12px;
+  margin-top: 14px;
 }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+
+<!-- ── Auth overlay ── -->
+<div id="auth-overlay">
+  <div id="auth-box">
+    <div id="auth-logo">LEAP</div>
+    <div id="auth-subtitle">🐸 Your account, your progress</div>
+    <div id="auth-tabs">
+      <button id="tab-login" class="active" onclick="switchTab('login')">Log In</button>
+      <button id="tab-signup" onclick="switchTab('signup')">Sign Up</button>
+    </div>
+    <input id="auth-user" type="text" placeholder="Username" maxlength="20" autocomplete="off" spellcheck="false">
+    <input id="auth-pass" type="password" placeholder="Password" maxlength="50" autocomplete="new-password">
+    <div id="auth-err"></div>
+    <button id="auth-submit" onclick="authSubmit()">Log In</button>
+    <div id="auth-footer">No account? <span id="auth-guest" style="color:#5ab05a;cursor:pointer;text-decoration:underline" onclick="guestPlay()">Play as guest</span></div>
+  </div>
+</div>
+
 <script>
 
 // ╔══════════════════════════════════════════╗
 // ║  FROG LEAP — Swamp Edition v3           ║
 // ╚══════════════════════════════════════════╝
+
+// ── Supabase Auth ─────────────────────────────
+const SB_URL = 'https://xpesdywnxyzcwsobqtoz.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhwZXNkeXdueHl6Y3dzb2JxdG96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyMjE4MzAsImV4cCI6MjA5Nzc5NzgzMH0.mqfRWRN59N_AMS0X5ZkBS72sXBrv6QYCt-MBfcmKQ-E';
+const SB_HDR = { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY, 'Content-Type': 'application/json' };
+
+// Current logged-in user (null = guest)
+let currentUser = null; // { id, username }
+let authMode = 'login'; // 'login' | 'signup'
+
+async function sbGet(path) {
+  const r = await fetch(SB_URL + path, { headers: SB_HDR });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.message || e.hint || 'Request failed'); }
+  return r.json();
+}
+async function sbPost(path, body) {
+  const r = await fetch(SB_URL + path, { method:'POST', headers: {...SB_HDR, 'Prefer':'return=representation'}, body: JSON.stringify(body) });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.message || e.hint || 'Request failed'); }
+  return r.json();
+}
+async function sbPatch(path, body) {
+  const r = await fetch(SB_URL + path, { method:'PATCH', headers: SB_HDR, body: JSON.stringify(body) });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.message || e.hint || 'Request failed'); }
+}
+
+// SHA-256 hash (client-side, never sends plaintext)
+async function hashPw(pw) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('fl-' + pw));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+// Apply a Supabase profile row to game state
+function applyProfile(p) {
+  if (p.best_score    > 0)   best             = p.best_score;
+  if (p.lily_pads_total > 0) lilyPadsTotal     = p.lily_pads_total;
+  if (p.lily_pads_balance !== undefined && p.lily_pads_balance !== null)
+                              lilyPadsBalance   = p.lily_pads_balance;
+  if (p.games_won     > 0)   gamesWon          = p.games_won;
+  if (p.win_threshold >= 30) WIN               = p.win_threshold === null ? Infinity : p.win_threshold;
+  if (p.equipped_skin)       equippedSkin      = p.equipped_skin;
+  if (p.equipped_accessory  !== undefined) equippedAccessory  = p.equipped_accessory  || '';
+  if (p.equipped_accessory2 !== undefined) equippedAccessory2 = p.equipped_accessory2 || '';
+  if (p.equipped_trail      !== undefined) equippedTrail      = p.equipped_trail      || '';
+  if (p.equipped_bundle     !== undefined) equippedBundle     = p.equipped_bundle     || '';
+  if (Array.isArray(p.owned_accessories)) ownedAccessories = p.owned_accessories;
+  if (Array.isArray(p.owned_trails))      ownedTrails      = p.owned_trails;
+  if (Array.isArray(p.owned_bundles))     ownedBundles     = p.owned_bundles;
+}
+
+// Save game state up to Supabase (debounced, fire-and-forget)
+let _syncTimer = null;
+function scheduleCloudSync() {
+  if (!currentUser) return;
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(() => {
+    sbPatch(`/rest/v1/profiles?id=eq.${encodeURIComponent(currentUser.id)}`, {
+      best_score:          best,
+      lily_pads_total:     lilyPadsTotal,
+      lily_pads_balance:   lilyPadsBalance,
+      games_won:           gamesWon,
+      win_threshold:       WIN === Infinity ? null : WIN,
+      equipped_skin:       equippedSkin,
+      equipped_accessory:  equippedAccessory,
+      equipped_accessory2: equippedAccessory2,
+      equipped_trail:      equippedTrail,
+      equipped_bundle:     equippedBundle,
+      owned_accessories:   ownedAccessories,
+      owned_trails:        ownedTrails,
+      owned_bundles:       ownedBundles,
+      updated_at:          new Date().toISOString(),
+    }).catch(() => {}); // silent fail; localStorage is still the safety net
+  }, 1500);
+}
+
+function authSetErr(msg) {
+  document.getElementById('auth-err').textContent = msg;
+}
+function authSetLoading(on) {
+  const btn = document.getElementById('auth-submit');
+  btn.disabled = on;
+  btn.textContent = on ? 'Please wait…' : (authMode === 'login' ? 'Log In' : 'Create Account');
+}
+
+function switchTab(mode) {
+  authMode = mode;
+  document.getElementById('tab-login').classList.toggle('active', mode === 'login');
+  document.getElementById('tab-signup').classList.toggle('active', mode === 'signup');
+  document.getElementById('auth-submit').textContent = mode === 'login' ? 'Log In' : 'Create Account';
+  document.getElementById('auth-footer').innerHTML = mode === 'login'
+    ? 'No account? <span id="auth-guest" style="color:#5ab05a;cursor:pointer;text-decoration:underline" onclick="guestPlay()">Play as guest</span>'
+    : 'Already have one? <span style="color:#5ab05a;cursor:pointer;text-decoration:underline" onclick="switchTab(\'login\')">Log In</span>';
+  authSetErr('');
+}
+
+async function authSubmit() {
+  const user = document.getElementById('auth-user').value.trim();
+  const pass = document.getElementById('auth-pass').value;
+  authSetErr('');
+
+  if (!user) { authSetErr('Enter a username.'); return; }
+  if (user.length < 3) { authSetErr('Username must be at least 3 characters.'); return; }
+  if (!/^[a-zA-Z0-9_]+$/.test(user)) { authSetErr('Letters, numbers, and _ only.'); return; }
+  if (!pass) { authSetErr('Enter a password.'); return; }
+  if (pass.length < 6) { authSetErr('Password must be at least 6 characters.'); return; }
+
+  authSetLoading(true);
+  try {
+    if (authMode === 'signup') {
+      // Check username availability
+      const existing = await sbGet(`/rest/v1/profiles?username=eq.${encodeURIComponent(user)}&select=id`);
+      if (existing.length > 0) { authSetErr('That username is taken.'); authSetLoading(false); return; }
+      const hash = await hashPw(pass);
+      const rows = await sbPost('/rest/v1/profiles', { username: user, password_hash: hash });
+      const profile = rows[0];
+      currentUser = { id: profile.id, username: profile.username };
+    } else {
+      // Login
+      const rows = await sbGet(`/rest/v1/profiles?username=eq.${encodeURIComponent(user)}&select=*`);
+      if (rows.length === 0) { authSetErr('Username not found.'); authSetLoading(false); return; }
+      const profile = rows[0];
+      const hash = await hashPw(pass);
+      if (hash !== profile.password_hash) { authSetErr('Incorrect password.'); authSetLoading(false); return; }
+      currentUser = { id: profile.id, username: profile.username };
+      applyProfile(profile);
+    }
+    // Persist session
+    localStorage.setItem('frogLeap_session', JSON.stringify(currentUser));
+    hideAuthOverlay();
+  } catch (err) {
+    authSetErr(err.message || 'Connection error. Try again.');
+    authSetLoading(false);
+  }
+}
+
+function guestPlay() {
+  currentUser = null;
+  localStorage.removeItem('frogLeap_session');
+  hideAuthOverlay();
+}
+
+function hideAuthOverlay() {
+  document.getElementById('auth-overlay').classList.add('hidden');
+}
+
+function showAuthOverlay() {
+  document.getElementById('auth-overlay').classList.remove('hidden');
+  document.getElementById('auth-err').textContent = '';
+  document.getElementById('auth-user').value = '';
+  document.getElementById('auth-pass').value = '';
+  authSetLoading(false);
+  switchTab('login');
+  setTimeout(() => document.getElementById('auth-user').focus(), 50);
+}
+
+function doLogout() {
+  currentUser = null;
+  localStorage.removeItem('frogLeap_session');
+  menuPage = 'main';
+  showAuthOverlay();
+}
+
+// Enter submits on keypress
+document.addEventListener('keydown', e => {
+  const overlay = document.getElementById('auth-overlay');
+  if (overlay && !overlay.classList.contains('hidden') && e.key === 'Enter') authSubmit();
+});
+
+// Try to restore session on load
+(async () => {
+  try {
+    const saved = localStorage.getItem('frogLeap_session');
+    if (saved) {
+      const s = JSON.parse(saved);
+      if (s && s.id && s.username) {
+        // Fetch latest profile
+        const rows = await sbGet(`/rest/v1/profiles?id=eq.${encodeURIComponent(s.id)}&select=*`);
+        if (rows.length > 0) {
+          currentUser = { id: s.id, username: s.username };
+          applyProfile(rows[0]);
+          hideAuthOverlay();
+          return;
+        }
+      }
+    }
+  } catch(e) {}
+  // No valid session — show overlay
+  showAuthOverlay();
+})();
+
 const C = document.getElementById('c');
 const ctx = C.getContext('2d');
 const W = 480, H = 640;
@@ -54,19 +356,25 @@ const WATER_Y    = PAD_BASE_Y + 42;
 const SKINS = [
   { id:'green',   label:'Green',   threshold:0,
     body:'#4aaa28', head:'#4aaa28', belly:'#c5e642', leg:'#388018', arm:'#388018', eye:'#1a4208', ol:'#1a4208' },
-  { id:'blue',    label:'Blue',    threshold:20,
+  { id:'blue',    label:'Blue',    threshold:0,
     body:'#2060c8', head:'#2060c8', belly:'#90d0f8', leg:'#1448a0', arm:'#1448a0', eye:'#082858', ol:'#082858' },
-  { id:'yellow',  label:'Yellow',  threshold:50,
+  { id:'yellow',  label:'Yellow',  threshold:0,
     body:'#b89818', head:'#b89818', belly:'#f0e858', leg:'#887008', arm:'#887008', eye:'#403800', ol:'#403800' },
-  { id:'red',     label:'Red',     threshold:100,
+  { id:'red',     label:'Red',     threshold:0,
     body:'#c02818', head:'#c02818', belly:'#f89888', leg:'#881808', arm:'#881808', eye:'#380808', ol:'#380808' },
-  { id:'purple',  label:'Purple',  threshold:200,
+  { id:'purple',  label:'Purple',  threshold:0,
     body:'#7020b0', head:'#7020b0', belly:'#c888f0', leg:'#4e0890', arm:'#4e0890', eye:'#260050', ol:'#260050' },
-  { id:'pink',    label:'Pink',    threshold:400,
+  { id:'pink',    label:'Pink',    threshold:0,
     body:'#c82880', head:'#c82880', belly:'#f898d0', leg:'#a01868', arm:'#a01868', eye:'#480030', ol:'#480030' },
-  { id:'orange',  label:'Orange',  threshold:700,
+  { id:'orange',  label:'Orange',  threshold:0,
     body:'#c05010', head:'#c05010', belly:'#f8c070', leg:'#883808', arm:'#883808', eye:'#381808', ol:'#381808' },
-  { id:'rainbow', label:'Rainbow', threshold:1000,
+  { id:'white',   label:'White',   threshold:0,
+    body:'#e8e8e8', head:'#e8e8e8', belly:'#ffffff', leg:'#c8c8c8', arm:'#c8c8c8', eye:'#444444', ol:'#444444' },
+  { id:'grey',    label:'Grey',    threshold:0,
+    body:'#808080', head:'#808080', belly:'#b0b0b0', leg:'#606060', arm:'#606060', eye:'#222222', ol:'#222222' },
+  { id:'cyan',    label:'Cyan',    threshold:0,
+    body:'#00c8c8', head:'#00c8c8', belly:'#80ffff', leg:'#008888', arm:'#008888', eye:'#003838', ol:'#003838' },
+  { id:'rainbow', label:'Rainbow', threshold:300,
     body:null, head:null, belly:null, leg:null, arm:null, eye:null, ol:null },
 ];
 
@@ -121,6 +429,7 @@ let nextEventPad = 8;
 let volcanoX = 0;
 let lavaBombs = [];
 let lavaSpawnTimer = 0;
+let gators = [], gatorSpawnCooldown = 0;
 let snowParts = [];
 
 // ── Menu / Settings ───────────────────────────
@@ -131,16 +440,36 @@ let sfxOn = true, ambienceOn = true;
 // ── Cosmetics / Currency ──────────────────────
 let equippedSkin = 'green';
 let equippedAccessory = null;
+let equippedAccessory2 = null;
 let equippedTrail = null;
+let equippedBundle = null;
 let ownedAccessories = [];
 let ownedTrails = [];
+let ownedBundles = [];
 let lilyPadsTotal = 0, lilyPadsBalance = 0;
 let frogTrail = [];
+
+// ── Accessory stacking pairs ──────────────────
+const STACK_PAIRS = [
+  ['bowtie','blush'],['blush','bowtie'],
+  ['tophat','monocle'],['monocle','tophat'],
+  ['sunhat','glasses'],['glasses','sunhat'],
+];
+
+// ── Deferred save (keeps the landing frame stutter-free) ──────────────
+let _saveTimer = null;
+function deferredSave() {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(saveProgress, 80);
+}
 
 // ── Shop ──────────────────────────────────────
 let shopSection = 'cosmetics';
 let shopScrollCosm = 0;
 let shopScrollTrail = 0;
+let shopPreviewId   = null;  // id of item being previewed
+let shopPreviewType = null;  // 'accessory' | 'trail' | 'bundle'
+let shopScrollBundles = 0;
 
 // ── Death ─────────────────────────────────────
 let deathType = null;
@@ -150,15 +479,26 @@ let gameEndTime = 0;
 const RESTART_DELAY = 2500;
 const AUTO_MENU_DELAY = 12000;
 
+// ── Accessory equip helper ────────────────────
+function equipAccessory(id) {
+  if (equippedAccessory === id) { equippedAccessory = null; equippedAccessory2 = null; saveProgress(); return; }
+  if (equippedAccessory2 === id) { equippedAccessory2 = null; saveProgress(); return; }
+  const canStack = STACK_PAIRS.some(p => p[0] === equippedAccessory && p[1] === id);
+  if (canStack) { equippedAccessory2 = id; }
+  else { equippedAccessory = id; equippedAccessory2 = null; }
+  saveProgress();
+}
+
 // ── Persistence ───────────────────────────────
 function saveProgress() {
   try {
     localStorage.setItem('frogLeap_v3', JSON.stringify({
       best, lilyPadsTotal, lilyPadsBalance,
-      equippedSkin, equippedAccessory, equippedTrail,
-      ownedAccessories, ownedTrails, gamesWon, WIN
+      equippedSkin, equippedAccessory, equippedAccessory2, equippedTrail,
+      equippedBundle, ownedAccessories, ownedTrails, ownedBundles, gamesWon, WIN
     }));
   } catch(e) {}
+  scheduleCloudSync();
 }
 function loadProgress() {
   try {
@@ -169,9 +509,12 @@ function loadProgress() {
     if (d.lilyPadsBalance !== undefined) lilyPadsBalance = d.lilyPadsBalance;
     if (d.equippedSkin)      equippedSkin = d.equippedSkin;
     if (d.equippedAccessory !== undefined) equippedAccessory = d.equippedAccessory;
+    if (d.equippedAccessory2 !== undefined) equippedAccessory2 = d.equippedAccessory2;
     if (d.equippedTrail !== undefined) equippedTrail = d.equippedTrail;
+    if (d.equippedBundle !== undefined) equippedBundle = d.equippedBundle;
     if (Array.isArray(d.ownedAccessories)) ownedAccessories = d.ownedAccessories;
     if (Array.isArray(d.ownedTrails)) ownedTrails = d.ownedTrails;
+    if (Array.isArray(d.ownedBundles)) ownedBundles = d.ownedBundles;
     if (d.gamesWon) gamesWon = d.gamesWon;
     if (d.WIN && d.WIN >= 30) WIN = d.WIN === null ? Infinity : d.WIN;
   } catch(e) {}
@@ -304,6 +647,37 @@ function playDamage() {
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
     osc.connect(g); g.connect(ac.destination);
     osc.start(t); osc.stop(t + 0.38);
+  } catch(e) {}
+}
+
+function playCyborgJump() {
+  if (!sfxOn) return;
+  try {
+    const ac = getAC(); const t = ac.currentTime;
+    const osc = ac.createOscillator(), gain = ac.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(80, t);
+    osc.frequency.exponentialRampToValueAtTime(320, t + 0.06);
+    osc.frequency.exponentialRampToValueAtTime(160, t + 0.14);
+    gain.gain.setValueAtTime(0.18, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    osc.connect(gain); gain.connect(ac.destination);
+    osc.start(t); osc.stop(t + 0.2);
+  } catch(e) {}
+}
+function playCyborgCharge() {
+  if (!sfxOn) return;
+  try {
+    const ac = getAC(); const t = ac.currentTime;
+    const osc = ac.createOscillator(), gain = ac.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(110, t);
+    osc.frequency.linearRampToValueAtTime(220, t + 0.3);
+    gain.gain.setValueAtTime(0.08, t);
+    gain.gain.linearRampToValueAtTime(0.14, t + 0.28);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+    osc.connect(gain); gain.connect(ac.destination);
+    osc.start(t); osc.stop(t + 0.36);
   } catch(e) {}
 }
 
@@ -572,6 +946,7 @@ function drawMoss(x, topY, width, col) {
 }
 
 function drawBG() {
+  ctx.globalAlpha = 1; // ensure sky always draws at full opacity
   const nA = nightAlpha(tod);
 
   // ── Sky ──────────────────────────────────────
@@ -686,6 +1061,9 @@ function drawBG() {
     }
   }
 
+  // ── Background parallax shift ─────────────────
+  const bgShift = (-camX * 0.018);
+
   // ── Far cypress treeline (two depth layers) ──
   // Far layer — shorter, desaturated
   const farCol  = currentEvent === 'spring'   ? '#1a5a1e' :
@@ -697,16 +1075,22 @@ function drawBG() {
   // Far layer
   for (let i = 0; i < CYPRESS_TREES.length; i++) {
     const ct = CYPRESS_TREES[i];
-    if (ct.layer === 0) drawCypress(ct.x, HORIZON, ct.h * 0.65, ct.w * 0.72, farCol);
+    if (ct.layer === 0) {
+      const sx = ((ct.x + bgShift) % (W + ct.w*2) + W + ct.w*2) % (W + ct.w*2) - ct.w;
+      if (sx > -50 && sx < W + 50) drawCypress(sx, HORIZON, ct.h * 0.65, ct.w * 0.72, farCol);
+    }
   }
   // Near layer + gnarled trees
   for (let i = 0; i < CYPRESS_TREES.length; i++) {
     const ct = CYPRESS_TREES[i];
     if (ct.layer === 1) {
-      drawCypress(ct.x, HORIZON, ct.h, ct.w, nearCol);
-      // Spanish moss on some near trees (not volcanic/winter)
-      if (currentEvent !== 'volcanic' && currentEvent !== 'winter' && ct.w > 12) {
-        drawMoss(ct.x, HORIZON - ct.h * 0.62, ct.w * 0.8, nearCol);
+      const sx = ((ct.x + bgShift) % (W + ct.w*2) + W + ct.w*2) % (W + ct.w*2) - ct.w;
+      if (sx > -50 && sx < W + 50) {
+        drawCypress(sx, HORIZON, ct.h, ct.w, nearCol);
+        // Spanish moss on some near trees (not volcanic/winter)
+        if (currentEvent !== 'volcanic' && currentEvent !== 'winter' && ct.w > 12) {
+          drawMoss(sx, HORIZON - ct.h * 0.62, ct.w * 0.8, nearCol);
+        }
       }
     }
   }
@@ -714,17 +1098,21 @@ function drawBG() {
   for (let i = 0; i < GNARLED_TREES.length; i++) {
     const gt = GNARLED_TREES[i];
     const gCol = currentEvent === 'volcanic' ? '#2a0e04' : currentEvent === 'winter' ? '#2a3530' : '#161e10';
-    drawGnarledTree(gt.x, HORIZON, gt.h, gCol);
+    const gsx = ((gt.x + bgShift * 0.05) % (W + 60) + W + 60) % (W + 60) - 30;
+    drawGnarledTree(gsx, HORIZON, gt.h, gCol);
   }
   // Spring: blossoms on treeline
   if (currentEvent === 'spring') {
     for (let i = 0; i < CYPRESS_TREES.length; i++) {
       const ct = CYPRESS_TREES[i];
       if (ct.layer === 1 && ct.w > 11) {
-        ctx.fillStyle = `rgba(255,180,210,${0.55 + Math.sin(ct.x * 0.22 + wv*0.01)*0.25})`;
-        ctx.beginPath(); ctx.arc(ct.x, HORIZON - ct.h * 0.85, ct.w * 0.45, 0, Math.PI*2); ctx.fill();
-        ctx.fillStyle = `rgba(255,220,230,0.3)`;
-        ctx.beginPath(); ctx.arc(ct.x + ct.w*0.2, HORIZON - ct.h * 0.68, ct.w * 0.3, 0, Math.PI*2); ctx.fill();
+        const bsx = ((ct.x + bgShift) % (W + ct.w*2) + W + ct.w*2) % (W + ct.w*2) - ct.w;
+        if (bsx > -50 && bsx < W + 50) {
+          ctx.fillStyle = `rgba(255,180,210,${0.55 + Math.sin(ct.x * 0.22 + wv*0.01)*0.25})`;
+          ctx.beginPath(); ctx.arc(bsx, HORIZON - ct.h * 0.85, ct.w * 0.45, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = `rgba(255,220,230,0.3)`;
+          ctx.beginPath(); ctx.arc(bsx + ct.w*0.2, HORIZON - ct.h * 0.68, ct.w * 0.3, 0, Math.PI*2); ctx.fill();
+        }
       }
     }
   }
@@ -832,7 +1220,7 @@ function drawBG() {
     const ctBaseA = currentEvent === 'volcanic' ? 0.55 : 0.9;
     for (let i = 0; i < CATTAILS.length; i++) {
       const ct = CATTAILS[i];
-      const cx = ((ct.x - wv * 0.08) % (W + 120) + W + 120) % (W + 120) - 60;
+      const cx = ((ct.x - wv * 0.08 + bgShift * 0.08) % (W + 120) + W + 120) % (W + 120) - 60;
       const sway = Math.sin(wv * 0.022 + ct.phase) * 3.5;
       ctx.save(); ctx.globalAlpha = ctBaseA;
       // Stem
@@ -989,8 +1377,11 @@ function drawPad(p) {
   if (al <= 0) return;
   const padW = p.w * (currentEvent === 'spring' ? 1.4 : currentEvent === 'winter' ? 0.70 : 1);
   ctx.save(); ctx.globalAlpha = al; ctx.translate(sx, p.y);
-  ctx.fillStyle = currentEvent === 'spring' ? '#1a3818' : '#142814';
-  ctx.beginPath(); ctx.ellipse(3, 11, padW/2, 11, 0, 0, Math.PI*2); ctx.fill();
+  // Shadow — skip on ice surface (winter) since pads sit on frozen water
+  if (currentEvent !== 'winter') {
+    ctx.fillStyle = currentEvent === 'spring' ? '#1a3818' : '#142814';
+    ctx.beginPath(); ctx.ellipse(3, 11, padW/2, 11, 0, 0, Math.PI*2); ctx.fill();
+  }
   ctx.fillStyle = currentEvent === 'spring' ? '#4aaa30' : '#347034';
   ctx.beginPath(); ctx.ellipse(0, 0, padW/2, 12, 0, 0, Math.PI*2); ctx.fill();
   ctx.fillStyle = currentEvent === 'spring' ? '#70d050' : '#4ea04e';
@@ -1033,7 +1424,8 @@ function makeFrog(x, y) {
 }
 
 function drawTrail() {
-  if (!equippedTrail || frogTrail.length < 3) return;
+  if (!equippedTrail && equippedBundle !== 'cyborg') return;
+  if (frogTrail.length < 3) return;
   for (let i = 0; i < frogTrail.length; i++) {
     const p = frogTrail[i];
     const t = i / frogTrail.length;
@@ -1041,7 +1433,12 @@ function drawTrail() {
     const radius = t * 7 + 1;
     const sx = p.x - camX;
     if (sx < -20 || sx > W + 20) continue;
-    if (equippedTrail === 'fire') {
+    if (equippedBundle === 'cyborg') {
+      const r2 = t > 0.6 ? 0 : 0;
+      const g2 = t > 0.6 ? 80 : t > 0.3 ? 140 : 200;
+      const b2 = 255;
+      ctx.fillStyle = `rgba(${r2},${g2},${b2},${alpha})`;
+    } else if (equippedTrail === 'fire') {
       const r = t > 0.6 ? 255 : 255;
       const g2 = t > 0.6 ? 60 : t > 0.3 ? 130 : 220;
       const b2 = t > 0.6 ? 20 : 40;
@@ -1063,7 +1460,6 @@ function drawFrog() {
   if (f.alpha <= 0) return;
   const sx = f.x - camX, sy = f.y;
   const isInvincible = frame < invincibleUntil;
-  if (isInvincible && Math.floor(frame / 5) % 2 === 0) return;
 
   ctx.save();
   ctx.globalAlpha = f.alpha;
@@ -1155,6 +1551,52 @@ function drawFrog() {
   }
 
   drawAccessory(equippedAccessory);
+  if (equippedAccessory2) drawAccessory(equippedAccessory2);
+
+  // Cyborg bundle: overdraw right half with mechanical look
+  if (equippedBundle === 'cyborg') {
+    // Right back legs — darker than arm, painted before body overlay
+    ctx.fillStyle = '#0c0c18';
+    ctx.beginPath(); ctx.ellipse(24,6,13,10,-0.30,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(21,18,11,8,-0.08,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#4080ff';
+    ctx.beginPath(); ctx.arc(25,6,2.5,0,Math.PI*2); ctx.fill();
+    // Right arm — slightly lighter than leg
+    ctx.fillStyle = '#1e1e2e';
+    ctx.beginPath(); ctx.ellipse(17,9,9,7,0.30,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#4080ff';
+    ctx.beginPath(); ctx.arc(20,10,2.5,0,Math.PI*2); ctx.fill();
+
+    // Right body half — clip to body ellipse shape (no rectangle)
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(0,-2,22,20,0,-Math.PI/2,Math.PI/2); // arc: (0,-22) → (22,-2) → (0,18)
+    ctx.lineTo(0,-2); ctx.closePath();
+    ctx.clip();
+    // Dark metallic fill
+    ctx.fillStyle = '#2a2a3a';
+    ctx.fillRect(-1,-30,30,55);
+    // Circuit lines inside body
+    ctx.strokeStyle = '#4080ff'; ctx.lineWidth = 1.2; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(4,-14); ctx.quadraticCurveTo(18,-8,20,2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(8,4); ctx.quadraticCurveTo(22,8,18,18); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(14,-10); ctx.lineTo(28,-4); ctx.stroke();
+    // Center seam — drawn inside clip so it can't exit the body shape
+    ctx.strokeStyle = '#4080ff'; ctx.lineWidth = 2.5; ctx.lineCap = 'square';
+    ctx.beginPath(); ctx.moveTo(0,-22); ctx.lineTo(0,18); ctx.stroke();
+    ctx.restore();
+
+    // Right eye overlay (drawn outside clip so full eye circle is replaced)
+    const cbEyeR = useSmallEyes ? 6 : 9;
+    const cbEyeY = useSmallEyes ? -18 : -22;
+    ctx.fillStyle = '#001040';
+    ctx.beginPath(); ctx.arc(10,cbEyeY,cbEyeR,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#4080ff'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(10,cbEyeY,cbEyeR,0,Math.PI*2); ctx.stroke();
+    ctx.fillStyle = '#80c0ff';
+    ctx.beginPath(); ctx.arc(10,cbEyeY,cbEyeR*0.39,0,Math.PI*2); ctx.fill();
+  }
+
   ctx.restore();
 
   // Tongue (world space)
@@ -1168,10 +1610,20 @@ function drawFrog() {
     const cpx    = (mouthX + tipX) / 2 - Math.sin(f.tongueAngle) * 12;
     const cpy    = (mouthY + tipY) / 2 + Math.cos(f.tongueAngle) * 12;
     ctx.save();
-    ctx.strokeStyle = '#d040a0'; ctx.lineWidth = 7; ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(mouthX, mouthY);
-    ctx.quadraticCurveTo(cpx, cpy, tipX, tipY); ctx.stroke();
-    ctx.fillStyle = '#b02878';
+    if (equippedBundle === 'cyborg') {
+      ctx.strokeStyle = '#2060ff'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(mouthX, mouthY);
+      ctx.quadraticCurveTo(cpx, cpy, tipX, tipY); ctx.stroke();
+      // Dark blue accent lines
+      ctx.strokeStyle = '#001880'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(mouthX, mouthY);
+      ctx.quadraticCurveTo(cpx, cpy, tipX, tipY); ctx.stroke();
+    } else {
+      ctx.strokeStyle = '#d040a0'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(mouthX, mouthY);
+      ctx.quadraticCurveTo(cpx, cpy, tipX, tipY); ctx.stroke();
+    }
+    ctx.fillStyle = equippedBundle === 'cyborg' ? '#4080ff' : '#b02878';
     ctx.beginPath(); ctx.arc(tipX, tipY, 7, 0, Math.PI*2); ctx.fill();
     ctx.restore();
   }
@@ -1192,7 +1644,7 @@ function drawFrog() {
         const pp = pads[pi];
         if (pp.st === 3) continue;
         const pw = pp.w * (currentEvent === 'spring' ? 1.4 : currentEvent === 'winter' ? 0.70 : 1);
-        if (Math.abs(simTx - pp.x) <= pw/2 - 3 && simTy >= pp.y - 22 && simTy <= pp.y + 8) {
+        if (Math.abs(simTx - pp.x) <= pw/2 + 4 && simTy >= pp.y - 24 && simTy <= pp.y + 10) {
           landX = simTx; landY = pp.y - 23; landsOnPad = true; break;
         }
       }
@@ -1273,8 +1725,8 @@ function drawAccessory(accId) {
     ctx.fillStyle = '#c8a020';
     ctx.beginPath(); ctx.ellipse(0,-38,8,5,0,0,Math.PI*2); ctx.fill();
   } else if (accId === 'blush') {
-    ctx.globalAlpha = 0.6;
-    ctx.fillStyle = '#ff88aa';
+    ctx.globalAlpha = 0.88;
+    ctx.fillStyle = '#d42020';
     ctx.beginPath(); ctx.ellipse(-17,-10,6,4,0,0,Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.ellipse( 17,-10,6,4,0,0,Math.PI*2); ctx.fill();
   } else if (accId === 'roboticeye') {
@@ -1323,7 +1775,7 @@ function drawAccessory(accId) {
     ctx.beginPath(); ctx.ellipse(0, 4, 14, 4, 0, 0, Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.ellipse(0, -2, 8, 7, 0, 0, Math.PI*2); ctx.fill();
   } else if (id === 'blush') {
-    ctx.fillStyle = '#ff88aa'; ctx.globalAlpha = 0.7;
+    ctx.fillStyle = '#d42020'; ctx.globalAlpha = 0.88;
     ctx.beginPath(); ctx.ellipse(-8, 0, 7, 5, 0, 0, Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.ellipse( 8, 0, 7, 5, 0, 0, Math.PI*2); ctx.fill();
   } else if (id === 'roboticeye') {
@@ -1352,10 +1804,11 @@ function drawAccessory(accId) {
   ctx.restore();
 }
 
-function drawFrogPreview(cx, cy, sc, skinId, accId) {
+function drawFrogPreview(cx, cy, sc, skinId, accId, bundleId) {
   ctx.save(); ctx.translate(cx, cy); ctx.scale(sc, sc);
-  const sk = skinId !== undefined ? skinId : equippedSkin;
-  const ac = accId  !== undefined ? accId  : equippedAccessory;
+  const sk = skinId   !== undefined ? skinId   : equippedSkin;
+  const ac = accId    !== undefined ? accId    : equippedAccessory;
+  const bd = bundleId !== undefined ? bundleId : equippedBundle;
   const sp = (prop) => getSkinProp(prop, sk);
   // Back legs
   ctx.fillStyle = sp('leg');
@@ -1395,12 +1848,50 @@ function drawFrogPreview(cx, cy, sc, skinId, accId) {
     ctx.fillStyle = '#b02878'; ctx.beginPath(); ctx.arc(0,-1,2.5,0,Math.PI*2); ctx.fill();
   }
   if (ac === 'blush') {
-    ctx.save(); ctx.globalAlpha = 0.6; ctx.fillStyle = '#ff88aa';
+    ctx.save(); ctx.globalAlpha = 0.88; ctx.fillStyle = '#d42020';
     ctx.beginPath(); ctx.ellipse(-17,-10,6,4,0,0,Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.ellipse( 17,-10,6,4,0,0,Math.PI*2); ctx.fill();
     ctx.restore();
   }
   if (ac && ac !== 'tongueout' && ac !== 'smalleyes' && ac !== 'blush') drawAccessory(ac);
+  if (equippedAccessory2) drawAccessory(equippedAccessory2);
+  // Cyborg bundle overlay
+  if (bd === 'cyborg') {
+    // Right back legs — darker than arm
+    ctx.fillStyle = '#0c0c18';
+    ctx.beginPath(); ctx.ellipse(24,6,13,10,-0.30,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(21,18,11,8,-0.08,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#4080ff'; ctx.beginPath(); ctx.arc(24,6,2,0,Math.PI*2); ctx.fill();
+    // Right arm nub — slightly lighter than leg
+    ctx.fillStyle = '#1e1e2e';
+    ctx.beginPath(); ctx.ellipse(17,9,9,7,0.30,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#4080ff'; ctx.beginPath(); ctx.arc(20,10,2,0,Math.PI*2); ctx.fill();
+
+    // Right half of body — clipped to body ellipse, seam drawn INSIDE clip
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(0,-2,22,20,0,-Math.PI/2,Math.PI/2);
+    ctx.lineTo(0,-2); ctx.closePath();
+    ctx.clip();
+    ctx.fillStyle = '#2a2a3a';
+    ctx.fillRect(-1,-30,30,55);
+    // Circuit lines
+    ctx.strokeStyle = '#4080ff'; ctx.lineWidth=1.2; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(4,-12); ctx.quadraticCurveTo(16,-6,18,2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(6,4); ctx.quadraticCurveTo(18,8,16,16); ctx.stroke();
+    // Seam line inside clip — can't exit body
+    ctx.strokeStyle = '#4080ff'; ctx.lineWidth=2; ctx.lineCap='square';
+    ctx.beginPath(); ctx.moveTo(0,-22); ctx.lineTo(0,18); ctx.stroke();
+    ctx.restore();
+
+    // Right eye → robotic
+    const rer = useSmall ? 6 : 9;
+    const reyY = useSmall ? -18 : -22;
+    ctx.fillStyle = '#001040'; ctx.beginPath(); ctx.arc(10,reyY,rer,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#4080ff'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(10,reyY,rer,0,Math.PI*2); ctx.stroke();
+    ctx.fillStyle = '#80c0ff'; ctx.beginPath(); ctx.arc(10,reyY,rer*0.39,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(8,reyY-2,1.5,0,Math.PI*2); ctx.fill();
+  }
   ctx.restore();
 }// ── Frog physics tick ─────────────────────────
 function frogTick() {
@@ -1415,6 +1906,8 @@ function frogTick() {
   // Squish recovery
   f.sqX += (1 - f.sqX) * 0.15;
   f.sqY += (1 - f.sqY) * 0.15;
+  // Alpha fade-in after respawn
+  if (f.alpha < 1 && !f.sinking) f.alpha = Math.min(1, f.alpha + 0.07);
   if (!f.grounded) {
     f.vy += GRAVITY;
     f.x += f.vx;
@@ -1423,7 +1916,13 @@ function frogTick() {
   } else {
     f.rot += (-f.rot) * 0.12;
     if (f.charging) {
+      const prevCharge = f.charge;
       f.charge = Math.min(1, f.charge + 0.012);
+      if (equippedBundle === 'cyborg' && prevCharge < 0.5 && f.charge >= 0.5) playCyborgCharge();
+    }
+    // Cancel balance if in a restricted context
+    if (f.balancing && (currentEvent === 'winter' || currentEvent === 'volcanic' || curPad === 0 || (frame < invincibleUntil && lives < 3))) {
+      f.balancing = false; f.balanceT = 0;
     }
     if (f.balancing && currentEvent !== 'spring') {
       f.balanceT += 1/60;
@@ -1449,10 +1948,11 @@ function frogTick() {
       }
     }
   }
-  // Auto-tongue while balancing
-  if (f.grounded && f.balancing && !f.dead) {
+  // Auto-tongue while grounded (faster when balancing, slower when idle)
+  if (f.grounded && !f.dead && !f.charging) {
     f.tongueCooldown -= 1/60;
     if (f.tongueCooldown <= 0 && f.tonguePhase === 'idle') {
+      // Reset with shorter cooldown when balancing (more lively), longer when idle
       let target = null, bestDist = TONGUE_MAX;
       bugs.forEach(b => {
         if (!b.alive) return;
@@ -1462,7 +1962,9 @@ function frogTick() {
       f.tongueAngle = target ? Math.atan2(target.y - f.y, target.x - f.x) : f.rot + (Math.random() - 0.5) * 1.2;
       f.tongueLen   = target ? bestDist : 60 + Math.random() * 60;
       f.tonguePhase = 'out'; f.tongueProg = 0;
-      f.tongueTarget = target; f.tongueCooldown = 8 + Math.random() * 7;
+      f.tongueTarget = target;
+      // Balancing: quick flicks (8–15s). Idle: slower (14–24s)
+      f.tongueCooldown = f.balancing ? 8 + Math.random() * 7 : 14 + Math.random() * 10;
     }
   }
   // Tongue animation
@@ -1514,7 +2016,7 @@ function frogJump() {
   f.balancing = false; f.balanceT = 0;
   f.onIce = false; frozenDamageTimer = 0;
   f.sqX = 0.6; f.sqY = 1.5;
-  playJump();
+  if (equippedBundle === 'cyborg') playCyborgJump(); else playJump();
 }
 
 // ── Lives / damage ────────────────────────────
@@ -1533,12 +2035,12 @@ function takeDamage(type) {
     }
     deathType = type; deathFrame = frame;
     frog.dead = true; gs = 'dead'; gameEndTime = Date.now();
-    if (type === 'water') {
+    if (type === 'water' || type === 'eaten') {
       const fallVy = frog.vy;
       frog.y = WATER_Y; frog.vx = 0; frog.vy = 0;
       waterHitSX = frog.x - camX;
       spark(frog.x, WATER_Y, 'splash');
-      playSplash(fallVy);
+      const _vy1 = fallVy; setTimeout(() => playSplash(_vy1), 0);
     } else if (type === 'sink') {
       playSink();
     } else if (type === 'lava') {
@@ -1549,16 +2051,33 @@ function takeDamage(type) {
     pickDeathPhrase();
     if (score > best) { best = score; isNewBest = true; saveProgress(); }
   } else {
-    // Respawn at the last non-sinking pad
-    invincibleUntil = frame + 90;
+    // Non-fatal — find respawn pad
     let respawnPad = curPad;
     while (respawnPad > 0 && pads[respawnPad].st >= 2) respawnPad--;
-    const rp = pads[respawnPad];
-    frog.x = rp.x; frog.y = rp.y - 23;
-    frog.vx = 0; frog.vy = 0;
-    frog.grounded = true; frog.dead = false;
-    frog.onIce = false; frozenDamageTimer = 0;
-    curPad = respawnPad;
+    invincibleUntil = frame + 120;
+    spawnGraceUntil = Date.now() + 2000;
+    frozenDamageTimer = 0;
+
+    if (type === 'water' || type === 'eaten') {
+      // Play splash, then animate frog sinking before respawn (~55 frames)
+      waterHitSX = frog.x - camX;
+      frog.y = WATER_Y; frog.vx = 0; frog.vy = 0;
+      frog.grounded = true; frog.dead = false; frog.alpha = 1;
+      frog.sqX = 1; frog.sqY = 1; frog.onIce = false;
+      deathFrame = frame; // used by drawWaterRipples
+      frog.sinking = { startFrame: frame, duration: 55, padIdx: respawnPad };
+      spark(frog.x, WATER_Y, 'splash');
+      const _vy2 = frog.vy; setTimeout(() => playSplash(_vy2), 0);
+      curPad = respawnPad;
+    } else {
+      // Sink/ice/lava — respawn immediately
+      const rp = pads[respawnPad];
+      frog.x = rp.x; frog.y = rp.y - 23;
+      frog.vx = 0; frog.vy = 0; frog.alpha = 1;
+      frog.grounded = true; frog.dead = false;
+      frog.sqX = 1; frog.sqY = 1; frog.onIce = false;
+      curPad = respawnPad;
+    }
   }
 }
 
@@ -1638,48 +2157,32 @@ function startWinterAmbience() {
   try {
     eventAmbiAC = new (window.AudioContext || window.webkitAudioContext)();
     const ac = eventAmbiAC;
-    // Low howling wind
-    (function wind() {
-      if (!eventAmbiAC || eventAmbiAC.state === 'closed') return;
-      const t = ac.currentTime;
-      const o = ac.createOscillator(), flt = ac.createBiquadFilter(), g = ac.createGain();
-      o.type = 'sawtooth';
-      const f0 = 55 + Math.random() * 45;
-      o.frequency.setValueAtTime(f0, t);
-      o.frequency.linearRampToValueAtTime(f0 * (0.75 + Math.random() * 0.5), t + 1.8);
-      flt.type = 'highpass'; flt.frequency.value = 200;
-      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.045, t + 0.25);
-      g.gain.linearRampToValueAtTime(0.028, t + 1.5); g.gain.exponentialRampToValueAtTime(0.001, t + 2.2);
-      o.connect(flt); flt.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 2.3);
-      setTimeout(wind, 1200 + Math.random() * 2000);
-    })();
-    // Ice creak
-    (function creak() {
-      if (!eventAmbiAC || eventAmbiAC.state === 'closed') return;
-      if (Math.random() > 0.55) {
-        const t = ac.currentTime;
-        const o = ac.createOscillator(), g = ac.createGain();
-        o.type = 'sine';
-        const f0 = 380 + Math.random() * 280;
-        o.frequency.setValueAtTime(f0, t);
-        o.frequency.exponentialRampToValueAtTime(f0 * 0.5, t + 0.18);
-        g.gain.setValueAtTime(0.022, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
-        o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + 0.25);
-      }
-      setTimeout(creak, 2800 + Math.random() * 5000);
-    })();
-    // Distant blizzard hiss
-    (function hiss() {
-      if (!eventAmbiAC || eventAmbiAC.state === 'closed') return;
-      const sr = ac.sampleRate;
-      const buf = ac.createBuffer(1, sr * 1.5, sr);
-      const d = buf.getChannelData(0);
-      for (let i = 0; i < d.length; i++) d[i] = (Math.random()*2-1) * Math.pow(Math.sin(Math.PI * i / d.length), 0.4);
-      const ns = ac.createBufferSource(); ns.buffer = buf;
-      const flt = ac.createBiquadFilter(); flt.type = 'highpass'; flt.frequency.value = 2800;
-      const g = ac.createGain(); g.gain.value = 0.018;
-      ns.connect(flt); flt.connect(g); g.connect(ac.destination); ns.start();
-      setTimeout(hiss, 2200 + Math.random() * 2800);
+    const sr = ac.sampleRate;
+    // Soft wind noise
+    const buf = ac.createBuffer(1, sr*6, sr);
+    const d = buf.getChannelData(0);
+    for (let i=0;i<d.length;i++) d[i]=(Math.random()*2-1);
+    const src=ac.createBufferSource(); src.buffer=buf; src.loop=true;
+    const lp=ac.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=280;
+    const hp=ac.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=60;
+    const g=ac.createGain(); g.gain.value=0.014;
+    src.connect(lp); lp.connect(hp); hp.connect(g); g.connect(ac.destination); src.start();
+    // Occasional soft chime
+    (function chime() {
+      if(!eventAmbiAC||eventAmbiAC.state==='closed') return;
+      const t=ac.currentTime;
+      const freqs=[880,1108,1320,1760];
+      const chosen=[freqs[Math.floor(Math.random()*freqs.length)], freqs[Math.floor(Math.random()*freqs.length)]];
+      chosen.forEach((f,i)=>{
+        const dt=i*0.35;
+        const o=ac.createOscillator(),g2=ac.createGain();
+        o.type='sine'; o.frequency.value=f;
+        g2.gain.setValueAtTime(0,t+dt);
+        g2.gain.linearRampToValueAtTime(0.018,t+dt+0.05);
+        g2.gain.exponentialRampToValueAtTime(0.001,t+dt+1.6);
+        o.connect(g2); g2.connect(ac.destination); o.start(t+dt); o.stop(t+dt+1.8);
+      });
+      setTimeout(chime, 7000+Math.random()*12000);
     })();
   } catch(e) {}
 }
@@ -1816,6 +2319,168 @@ function drawLavaBombs() {
     ctx.beginPath(); ctx.arc(sx, lb.y, lb.r, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = '#ff6010';
     ctx.beginPath(); ctx.arc(sx+1, lb.y+1, lb.r * 0.6, 0, Math.PI*2); ctx.fill();
+  });
+}
+
+// ── Alligators ─────────────────────────────────
+function trySpawnGator() {
+  // Find a visible pad pair with a gap of 220–480px
+  for (let i = curPad + 1; i < Math.min(curPad + 14, pads.length - 1); i++) {
+    const pL = pads[i], pR = pads[i + 1];
+    if (pL.st >= 2 || pR.st >= 2) continue;
+    const gap = pR.x - pL.x;
+    if (gap < 220 || gap > 480) continue;
+    const midX = (pL.x + pR.x) / 2;
+    const sxL = pL.x - camX, sxR = pR.x - camX;
+    if (sxL < 40 || sxR > W - 40) continue; // both pads must be visible
+    if (gators.some(g => Math.abs(g.x - midX) < 250)) continue; // no crowding
+    gators.push({
+      x: midX,
+      zoneL: pL.x + pL.w * 0.3, // inner edge zone where detection triggers
+      zoneR: pR.x - pR.w * 0.3,
+      phase: 'rising', timer: 0, lungeT: 0
+    });
+    return;
+  }
+}
+
+function tickGators() {
+  if (!frog || frog.dead) return;
+  // No gators in winter
+  if (currentEvent === 'winter') { gators = []; return; }
+  // Spawn cooldown
+  gatorSpawnCooldown--;
+  if (gatorSpawnCooldown <= 0 && gators.length < 2 && score >= 4) {
+    if (Math.random() < 0.004) { trySpawnGator(); gatorSpawnCooldown = 480; }
+  }
+  gators.forEach(g => {
+    g.timer++;
+    if (g.phase === 'rising') {
+      if (g.timer >= 30) { g.phase = 'lurking'; g.timer = 0; }
+    } else if (g.phase === 'lurking') {
+      if (g.timer >= 480) { g.phase = 'submerging'; g.timer = 0; return; }
+      // Detect frog crossing the danger zone while airborne
+      if (!frog.grounded && !frog.dead && frame >= invincibleUntil) {
+        if (frog.x >= g.zoneL && frog.x <= g.zoneR && frog.y <= WATER_Y - 2) {
+          g.phase = 'lunging'; g.lungeT = 0;
+          waterHitSX = frog.x - camX;
+          takeDamage('eaten');
+        }
+      }
+    } else if (g.phase === 'submerging') {
+      if (g.timer >= 30) { g.phase = 'done'; }
+    } else if (g.phase === 'lunging') {
+      g.lungeT++;
+      if (g.lungeT >= 55) { g.phase = 'submerging'; g.timer = 0; }
+    }
+  });
+  gators = gators.filter(g => g.phase !== 'done');
+}
+
+function drawGators() {
+  gators.forEach(g => {
+    const sx = g.x - camX;
+    if (sx < -120 || sx > W + 120) return;
+    let emerge = 0;
+    if      (g.phase === 'rising')     emerge = Math.min(1, g.timer / 28);
+    else if (g.phase === 'lurking')    emerge = 1;
+    else if (g.phase === 'submerging') emerge = Math.max(0, 1 - g.timer / 28);
+    else if (g.phase === 'lunging')    emerge = Math.min(2.8, 1 + g.lungeT * 0.11);
+    if (emerge <= 0) return;
+
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, emerge * 3);
+    const riseH = emerge * 38;
+    const mouthOpen = g.phase === 'lunging'
+      ? Math.min(1, g.lungeT / 8)
+      : (0.28 + Math.sin(g.timer * 0.055) * 0.13);
+    const jawSep = mouthOpen * 28;
+    const headTop  = WATER_Y - riseH;
+    const upperJawBot = WATER_Y - jawSep * 0.52;
+    const lowerJawTop = WATER_Y + jawSep * 0.48;
+
+    // Gator faces LEFT (snout on left side, toward approaching frog)
+    const HW = 36; // half-width of head
+
+    // ── Upper jaw ──────────────────────────────
+    ctx.fillStyle = '#2a6e18';
+    ctx.beginPath();
+    ctx.moveTo(sx + HW,      WATER_Y + 5);          // back-bottom
+    ctx.lineTo(sx + HW,      headTop + 10);          // back-top
+    ctx.quadraticCurveTo(sx, headTop, sx - HW - 6, upperJawBot); // snout top arc
+    ctx.lineTo(sx - HW - 6,  WATER_Y - 2);           // snout bottom
+    ctx.quadraticCurveTo(sx, WATER_Y + 3, sx + HW, WATER_Y + 5); // bottom arc
+    ctx.closePath(); ctx.fill();
+    // Highlight ridge
+    ctx.fillStyle = '#3a8a22';
+    ctx.beginPath(); ctx.ellipse(sx + 6, headTop + 9, 14, 5, 0, 0, Math.PI*2); ctx.fill();
+    // Scale bumps
+    ctx.fillStyle = '#1e5612';
+    for (let k = 0; k < 4; k++) {
+      const bx = sx - HW + 8 + k * 13;
+      ctx.beginPath(); ctx.arc(bx, headTop + 13, 3, Math.PI, 0); ctx.fill();
+    }
+
+    // ── Lower jaw ──────────────────────────────
+    ctx.fillStyle = '#1e5a10';
+    ctx.beginPath();
+    ctx.moveTo(sx + HW - 4, WATER_Y + 7);
+    ctx.lineTo(sx - HW - 2, lowerJawTop + 2);
+    ctx.lineTo(sx - HW - 2, WATER_Y + 5);
+    ctx.quadraticCurveTo(sx, WATER_Y + 10, sx + HW - 4, WATER_Y + 7);
+    ctx.closePath(); ctx.fill();
+
+    // ── Teeth ──────────────────────────────────
+    ctx.fillStyle = '#f0eedc';
+    // Upper teeth (pointing down)
+    for (let k = 0; k < 7; k++) {
+      const tx = sx - HW + 2 + k * 10;
+      ctx.beginPath();
+      ctx.moveTo(tx - 2.5, upperJawBot);
+      ctx.lineTo(tx,       upperJawBot + jawSep * 0.42);
+      ctx.lineTo(tx + 2.5, upperJawBot);
+      ctx.closePath(); ctx.fill();
+    }
+    // Lower teeth (pointing up)
+    for (let k = 0; k < 6; k++) {
+      const tx = sx - HW + 7 + k * 10;
+      ctx.beginPath();
+      ctx.moveTo(tx - 2,   lowerJawTop);
+      ctx.lineTo(tx,       lowerJawTop - jawSep * 0.38);
+      ctx.lineTo(tx + 2,   lowerJawTop);
+      ctx.closePath(); ctx.fill();
+    }
+
+    // ── Eye (on right / back of head) ──────────
+    const eyeX = sx + 14, eyeY = headTop + 9;
+    ctx.fillStyle = '#ffcc00';
+    ctx.beginPath(); ctx.arc(eyeX, eyeY, 8, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#1a1a00';
+    ctx.beginPath(); ctx.ellipse(eyeX, eyeY, 2.5, 6, 0.15, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,180,0.7)';
+    ctx.beginPath(); ctx.arc(eyeX - 2, eyeY - 3, 2, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#1a5010'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(eyeX, eyeY, 8, 0, Math.PI*2); ctx.stroke();
+
+    // ── Nostril ────────────────────────────────
+    ctx.fillStyle = '#1a4a0e';
+    ctx.beginPath(); ctx.ellipse(sx - HW + 4, headTop + 8, 3.5, 2.5, -0.4, 0, Math.PI*2); ctx.fill();
+
+    // ── Water ripple ───────────────────────────
+    if (emerge < 1.2) {
+      ctx.strokeStyle = `rgba(80,180,200,${0.35 * (1 - Math.min(1, emerge))})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.ellipse(sx, WATER_Y, 58, 7, 0, 0, Math.PI*2); ctx.stroke();
+    }
+    // Lunge warning glow
+    if (g.phase === 'lunging' && g.lungeT < 30) {
+      const gw = ctx.createRadialGradient(sx, WATER_Y, 0, sx, WATER_Y, 72);
+      gw.addColorStop(0, `rgba(255,50,50,${0.3 * (1 - g.lungeT / 30)})`);
+      gw.addColorStop(1, 'rgba(255,0,0,0)');
+      ctx.save(); ctx.globalAlpha = 1; ctx.fillStyle = gw;
+      ctx.beginPath(); ctx.arc(sx, WATER_Y, 72, 0, Math.PI*2); ctx.fill(); ctx.restore();
+    }
+    ctx.restore();
   });
 }
 
@@ -1979,6 +2644,7 @@ function startGame() {
   spawnGraceUntil = Date.now() + 1500;
   frogOnIce = false; frozenDamageTimer = 0;
   currentEvent = null; lavaBombs = []; lavaSpawnTimer = 0; snowParts = [];
+  gators = []; gatorSpawnCooldown = 0;
   genLevel(); genBgPads(); genBugs(); parts = []; frogTrail = [];
   jumpBoostEnd = 0; speedBoostEnd = 0; padBoostEnd = 0;
   deathType = null; deathFrame = 0; waterHitSX = 0;
@@ -2102,6 +2768,15 @@ function drawHUD() {
     ctx.fillText('Hold SPACE to charge — release to leap   |   Q: balance', W/2, H - 18);
     ctx.textAlign = 'left';
   }
+
+  // Return to Menu button: shown on first pad (score=0) or during post-respawn invincibility
+  if (score === 0 || (frame < invincibleUntil && lives < 3)) {
+    ctx.fillStyle = 'rgba(10,30,10,0.82)';
+    ctx.beginPath(); ctx.roundRect(W - 162, H - 50, 150, 34, 17); ctx.fill();
+    ctx.fillStyle = '#9de89d'; ctx.font = 'bold 13px Arial'; ctx.textAlign = 'right';
+    ctx.fillText('↩ Return to Menu', W - 18, H - 28);
+    ctx.textAlign = 'left';
+  }
 }
 
 // ── Toggle helper ─────────────────────────────
@@ -2156,29 +2831,67 @@ function drawShopPage() {
   ctx.textAlign = 'center';
   ctx.fillStyle = 'rgba(0,10,0,0.78)'; ctx.fillRect(0,0,W,H);
   ctx.fillStyle = '#3de83d'; ctx.font = 'bold 26px Arial';
-  ctx.fillText('SHOP', W/2, 52);
-  ctx.fillStyle = '#a0ffa0'; ctx.font = 'bold 14px Arial';
-  ctx.fillText('🍃 ' + lilyPadsBalance + ' lily pads', W/2, 76);
+  ctx.fillText('SHOP', W/2, 50);
+  ctx.fillStyle = '#a0ffa0'; ctx.font = 'bold 13px Arial';
+  ctx.fillText('🍃 ' + lilyPadsBalance + ' lily pads', W/2, 70);
 
-  // Section tabs
+  // Section tabs — evenly spaced, 111px each, 6px gap
   const tabs = [
-    { id:'cosmetics', label:'Cosmetics', x: W/2 - 150 },
-    { id:'trails',    label:'Trails',    x: W/2 - 10  },
-    { id:'secret',    label:'???',       x: W/2 + 102 },
+    { id:'cosmetics', label:'Cosmetics', x:8   },
+    { id:'trails',    label:'Trails',    x:125  },
+    { id:'bundles',   label:'Bundles',   x:242  },
+    { id:'secret',    label:'???',       x:359  },
   ];
   tabs.forEach(tab => {
     const active = shopSection === tab.id;
-    ctx.fillStyle = active ? '#2a8a2a' : '#2a3e2a';
-    ctx.beginPath(); ctx.roundRect(tab.x, 88, 128, 30, 8); ctx.fill();
-    ctx.fillStyle = active ? '#fff' : '#c0dcc0'; ctx.font = 'bold 13px Arial';
-    ctx.fillText(tab.label, tab.x + 64, 108);
+    ctx.fillStyle = active ? '#2a8a2a' : '#1e2e1e';
+    ctx.beginPath(); ctx.roundRect(tab.x, 80, 111, 28, 7); ctx.fill();
+    if (active) { ctx.strokeStyle = '#5adc5a'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.roundRect(tab.x, 80, 111, 28, 7); ctx.stroke(); }
+    ctx.fillStyle = active ? '#fff' : '#7aaa7a'; ctx.font = `bold ${active ? 12 : 11}px Arial`;
+    ctx.fillText(tab.label, tab.x + 55, 99);
   });
 
+  // ── Shared preview frog (all sections) ───────
+  // Determine what skin/acc/bundle to show in preview
+  const prevAcc    = (shopPreviewType === 'accessory') ? shopPreviewId : equippedAccessory;
+  const prevBundle = (shopPreviewType === 'bundle')    ? shopPreviewId : equippedBundle;
+  drawFrogPreview(W/2, 168, 1.8, equippedSkin, prevAcc, prevBundle);
+
+  // Buy / Equip button when something is being previewed
+  if (shopPreviewId) {
+    let btnLabel = '', btnColor = '#2a6a2a', btnTextColor = '#fff', canAct = true;
+    if (shopPreviewType === 'accessory') {
+      const it = ACCESSORIES.find(a => a.id === shopPreviewId);
+      const owned = it && ownedAccessories.includes(it.id);
+      btnLabel = owned ? 'Equip' : `Buy  🍃${it ? it.cost : ''}`;
+      canAct = owned || (it && lilyPadsBalance >= it.cost);
+      if (!canAct) { btnColor = '#1a2a1a'; btnTextColor = '#666'; }
+    } else if (shopPreviewType === 'trail') {
+      const it = TRAILS.find(t => t.id === shopPreviewId);
+      const owned = it && ownedTrails.includes(it.id);
+      btnLabel = owned ? 'Equip' : `Buy  🍃${it ? it.cost : ''}`;
+      canAct = owned || (it && lilyPadsBalance >= it.cost);
+      if (!canAct) { btnColor = '#1a2a1a'; btnTextColor = '#666'; }
+    } else if (shopPreviewType === 'bundle') {
+      const owned = ownedBundles.includes(shopPreviewId);
+      const cost = 500;
+      btnLabel = equippedBundle === shopPreviewId ? 'Unequip' : owned ? 'Equip' : `Buy  🍃${cost}`;
+      canAct = owned || lilyPadsBalance >= cost;
+      if (!canAct) { btnColor = '#1a1a2a'; btnTextColor = '#666'; btnColor = '#0a1a2a'; }
+      else if (shopPreviewType === 'bundle') btnColor = '#102a5a';
+    }
+    ctx.fillStyle = btnColor;
+    ctx.beginPath(); ctx.roundRect(W/2-70, 218, 140, 34, 17); ctx.fill();
+    ctx.fillStyle = btnTextColor; ctx.font = 'bold 13px Arial';
+    ctx.fillText(btnLabel, W/2, 240);
+  }
+
+  // ── Secret tab ───────────────────────────────
   if (shopSection === 'secret') {
     ctx.fillStyle = '#555'; ctx.font = 'bold 22px Arial';
-    ctx.fillText('Not finished yet', W/2, H/2 - 20);
+    ctx.fillText('Not finished yet', W/2, H/2 - 10);
     ctx.fillStyle = '#444'; ctx.font = '14px Arial';
-    ctx.fillText('Check back later...', W/2, H/2 + 14);
+    ctx.fillText('Check back later...', W/2, H/2 + 20);
     ctx.fillStyle = '#183018';
     ctx.beginPath(); ctx.roundRect(W/2-70, H-66, 140, 42, 21); ctx.fill();
     ctx.fillStyle = '#7ac87a'; ctx.font = 'bold 16px Arial';
@@ -2186,15 +2899,57 @@ function drawShopPage() {
     ctx.textAlign = 'left'; return;
   }
 
-  drawFrogPreview(W/2, 170, 2.4, equippedSkin, equippedAccessory);
+  // ── Bundles tab ──────────────────────────────
+  if (shopSection === 'bundles') {
+    const BUNDLES = [
+      { id:'cyborg', label:'CYBORG', desc:'Half-robotic frog · blue flame trail · robotic SFX', cost:500 },
+    ];
+    const bGridTop = 268;
+    BUNDLES.forEach((bundle, idx) => {
+      const bx = W/2, by = bGridTop + idx * 130 + 55;
+      const owned = ownedBundles.includes(bundle.id);
+      const equipped = equippedBundle === bundle.id;
+      const previewing = shopPreviewId === bundle.id;
+      ctx.fillStyle = previewing ? 'rgba(60,120,255,0.28)' : equipped ? 'rgba(60,120,255,0.18)' : owned ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.40)';
+      ctx.beginPath(); ctx.roundRect(bx-148, by-50, 296, 100, 12); ctx.fill();
+      if (previewing || equipped) {
+        ctx.strokeStyle = previewing ? 'rgba(140,180,255,0.9)' : 'rgba(100,160,255,0.5)';
+        ctx.lineWidth = previewing ? 2 : 1.5;
+        ctx.beginPath(); ctx.roundRect(bx-148, by-50, 296, 100, 12); ctx.stroke();
+      }
+      // Mini cyborg icon
+      ctx.save(); ctx.translate(bx-90, by-5);
+      ctx.fillStyle = '#4aaa28'; ctx.beginPath(); ctx.arc(0,0,18,Math.PI/2,-Math.PI/2); ctx.fill();
+      ctx.fillStyle = '#2a2a3a'; ctx.beginPath(); ctx.arc(0,0,18,-Math.PI/2,Math.PI/2); ctx.fill();
+      ctx.strokeStyle = '#4080ff'; ctx.lineWidth=1.2; ctx.beginPath(); ctx.moveTo(0,-18); ctx.lineTo(0,18); ctx.stroke();
+      ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(-7,-6,4,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#001040'; ctx.beginPath(); ctx.arc(7,-6,4,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle='#4080ff'; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(7,-6,4,0,Math.PI*2); ctx.stroke();
+      ctx.fillStyle='#80c0ff'; ctx.beginPath(); ctx.arc(7,-6,1.5,0,Math.PI*2); ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial'; ctx.fillText(bundle.label, bx+20, by-22);
+      ctx.fillStyle = '#aaa'; ctx.font = '10px Arial'; ctx.fillText(bundle.desc, bx+20, by-6);
+      if (equipped) { ctx.fillStyle = '#4080ff'; ctx.font = 'bold 12px Arial'; ctx.fillText('✓ Equipped', bx+20, by+18); }
+      else if (owned) { ctx.fillStyle = '#bbb'; ctx.font = '11px Arial'; ctx.fillText('Tap to preview', bx+20, by+18); }
+      else {
+        const canBuy = lilyPadsBalance >= bundle.cost;
+        ctx.fillStyle = canBuy ? '#ffe060' : '#666'; ctx.font = 'bold 12px Arial';
+        ctx.fillText('🍃 ' + bundle.cost, bx+20, by+18);
+      }
+    });
+    ctx.fillStyle = '#183018';
+    ctx.beginPath(); ctx.roundRect(W/2-70, H-66, 140, 42, 21); ctx.fill();
+    ctx.fillStyle = '#7ac87a'; ctx.font = 'bold 16px Arial'; ctx.fillText('BACK', W/2, H-40);
+    ctx.textAlign = 'left'; return;
+  }
 
-  // Grid items
+  // ── Cosmetics / Trails grid ──────────────────
   const items = shopSection === 'cosmetics' ? ACCESSORIES : TRAILS;
   const scroll = shopSection === 'cosmetics' ? shopScrollCosm : shopScrollTrail;
   const cols = 3;
   const cellW = W / cols;
-  const gridTop = 226;
-  const cellH = 90;
+  const gridTop = 262;
+  const cellH = 82;
   const visRows = Math.ceil((H - gridTop - 80) / cellH);
 
   items.forEach((item, idx) => {
@@ -2208,48 +2963,44 @@ function drawShopPage() {
       ? ownedAccessories.includes(item.id)
       : ownedTrails.includes(item.id);
     const equipped = shopSection === 'cosmetics'
-      ? item.id === equippedAccessory
+      ? (item.id === equippedAccessory || item.id === equippedAccessory2)
       : item.id === equippedTrail;
+    const previewing = item.id === shopPreviewId;
     const canBuy = !owned && lilyPadsBalance >= item.cost;
 
-    ctx.fillStyle = equipped ? 'rgba(80,200,80,0.32)' : owned ? 'rgba(255,255,255,0.14)' : canBuy ? 'rgba(255,240,100,0.10)' : 'rgba(0,0,0,0.45)';
-    ctx.beginPath(); ctx.roundRect(cx-68, cy-cellH/2+4, 136, cellH-8, 10); ctx.fill();
-    if (equipped) { ctx.strokeStyle = 'rgba(100,255,100,0.6)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.roundRect(cx-68, cy-cellH/2+4, 136, cellH-8, 10); ctx.stroke(); }
+    ctx.fillStyle = previewing ? 'rgba(255,220,60,0.22)' : equipped ? 'rgba(80,200,80,0.28)' : owned ? 'rgba(255,255,255,0.12)' : canBuy ? 'rgba(255,240,100,0.07)' : 'rgba(0,0,0,0.40)';
+    ctx.beginPath(); ctx.roundRect(cx-60, cy-cellH/2+3, 120, cellH-6, 9); ctx.fill();
+    if (previewing) { ctx.strokeStyle = 'rgba(255,220,60,0.8)'; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.roundRect(cx-60, cy-cellH/2+3, 120, cellH-6, 9); ctx.stroke(); }
+    else if (equipped) { ctx.strokeStyle = 'rgba(100,255,100,0.5)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.roundRect(cx-60, cy-cellH/2+3, 120, cellH-6, 9); ctx.stroke(); }
 
     if (shopSection === 'cosmetics') {
-      drawAccessoryIcon(item.id, cx, cy - 14);
+      drawAccessoryIcon(item.id, cx, cy - 12);
     } else {
-      // Trail color swatch
       if (item.id === 'rainbow') {
         const rh = ['#ff4040','#ff9800','#ffe020','#40cc40','#4088ff','#cc40cc'];
-        rh.forEach((c, ci) => {
-          ctx.fillStyle = c;
-          ctx.beginPath(); ctx.moveTo(cx, cy-14);
-          ctx.arc(cx, cy-14, 12, ci*(Math.PI*2/6), (ci+1)*(Math.PI*2/6));
-          ctx.closePath(); ctx.fill();
-        });
+        rh.forEach((c, ci) => { ctx.fillStyle = c; ctx.beginPath(); ctx.moveTo(cx, cy-12); ctx.arc(cx, cy-12, 11, ci*(Math.PI*2/6), (ci+1)*(Math.PI*2/6)); ctx.closePath(); ctx.fill(); });
       } else if (item.id === 'fire') {
-        ['#ff4020','#ff8020','#ffe040'].forEach((c, ci) => {
-          ctx.fillStyle = c;
-          ctx.beginPath(); ctx.arc(cx - 6 + ci*6, cy - 14 + ci*2, 5 - ci, 0, Math.PI*2); ctx.fill();
-        });
+        ['#ff4020','#ff8020','#ffe040'].forEach((c, ci) => { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(cx-5+ci*5, cy-12+ci*2, 4.5-ci, 0, Math.PI*2); ctx.fill(); });
       } else {
-        const tcols = { red:'#ff4040', blue:'#4488ff', green:'#44ee44', yellow:'#ffe040',
-          purple:'#aa44ff', pink:'#ff44cc', orange:'#ff8822' };
+        const tcols = { red:'#ff4040', blue:'#4488ff', green:'#44ee44', yellow:'#ffe040', purple:'#aa44ff', pink:'#ff44cc', orange:'#ff8822' };
         ctx.fillStyle = tcols[item.id] || '#aaa';
-        ctx.beginPath(); ctx.arc(cx, cy-14, 12, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(cx, cy-12, 11, 0, Math.PI*2); ctx.fill();
       }
     }
 
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 12px Arial';
-    ctx.fillText(item.label, cx, cy + 8);
-    if (equipped) {
-      ctx.fillStyle = '#80ff80'; ctx.font = 'bold 11px Arial'; ctx.fillText('✓ Equipped', cx, cy + 22);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 11px Arial';
+    ctx.fillText(item.label, cx, cy + 6);
+    if (item.id === equippedAccessory && item.id === equippedAccessory2) {
+      ctx.fillStyle = '#80ff80'; ctx.font = '10px Arial'; ctx.fillText('✓ x2', cx, cy + 19);
+    } else if (equipped) {
+      ctx.fillStyle = '#80ff80'; ctx.font = '10px Arial'; ctx.fillText('✓ Equipped', cx, cy + 19);
+    } else if (previewing) {
+      ctx.fillStyle = '#ffe060'; ctx.font = '10px Arial'; ctx.fillText('Previewing', cx, cy + 19);
     } else if (owned) {
-      ctx.fillStyle = '#bbb'; ctx.font = '11px Arial'; ctx.fillText('Tap to equip', cx, cy + 22);
+      ctx.fillStyle = '#bbb'; ctx.font = '10px Arial'; ctx.fillText('Tap to equip', cx, cy + 19);
     } else {
-      ctx.fillStyle = canBuy ? '#ffe060' : '#888'; ctx.font = '11px Arial';
-      ctx.fillText('🍃 ' + item.cost, cx, cy + 22);
+      ctx.fillStyle = canBuy ? '#ffe060' : '#888'; ctx.font = '10px Arial';
+      ctx.fillText('🍃 ' + item.cost, cx, cy + 19);
     }
   });
 
@@ -2285,7 +3036,9 @@ function drawFrogsPage() {
   ctx.strokeStyle = 'rgba(80,160,80,0.28)'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(28, 258); ctx.lineTo(W-28, 258); ctx.stroke();
   const cols = 4, cellW = W / cols;
-  const gridTop = 264, gridBot = H - 72, cellH = (gridBot - gridTop) / 2;
+  const gridTop = 264, gridBot = H - 72;
+  const skinRows = Math.ceil(SKINS.length / cols);
+  const cellH = (gridBot - gridTop) / skinRows;
   SKINS.forEach((skin, idx) => {
     const col = idx % cols, row = Math.floor(idx / cols);
     const cx = cellW * col + cellW / 2;
@@ -2334,6 +3087,16 @@ function drawMenu() {
   ctx.textAlign = 'center';
 
   if (menuPage === 'main') {
+    // Username badge — top-left
+    if (currentUser) {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = 'rgba(20,50,20,0.75)';
+      ctx.beginPath(); ctx.roundRect(10, 10, Math.min(180, ctx.measureText('👤 ' + currentUser.username).width + 22), 30, 15); ctx.fill();
+      ctx.fillStyle = '#80f080'; ctx.font = 'bold 12px Arial';
+      ctx.fillText('👤 ' + currentUser.username, 20, 30);
+      ctx.textAlign = 'center';
+    }
+
     const bobY = Math.sin(frame * 0.04) * 4;
     drawFrogPreview(W/2, 122 + bobY, 2.4, equippedSkin, equippedAccessory);
     ctx.fillStyle = '#3de83d'; ctx.font = 'bold 80px Arial'; ctx.fillText('LEAP', W/2, 215);
@@ -2377,7 +3140,24 @@ function drawMenu() {
     ctx.fillStyle = '#183018';
     ctx.beginPath(); ctx.roundRect(W/2-70, 438, 140, 44, 22); ctx.fill();
     ctx.fillStyle = '#7ac87a'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('BACK', W/2, 466); ctx.textAlign = 'left';
+    ctx.fillText('BACK', W/2, 466);
+    // Account row
+    if (currentUser) {
+      ctx.fillStyle = '#3a7a3a'; ctx.font = '12px Arial';
+      ctx.fillText('@' + currentUser.username, W/2, 495);
+      ctx.fillStyle = '#2a0a0a';
+      ctx.beginPath(); ctx.roundRect(W/2-60, 502, 120, 34, 17); ctx.fill();
+      ctx.fillStyle = '#cc5555'; ctx.font = 'bold 13px Arial';
+      ctx.fillText('LOG OUT', W/2, 524);
+    } else {
+      ctx.fillStyle = '#556655'; ctx.font = '12px Arial';
+      ctx.fillText('Playing as guest', W/2, 495);
+      ctx.fillStyle = '#0a1a0a';
+      ctx.beginPath(); ctx.roundRect(W/2-60, 502, 120, 34, 17); ctx.fill();
+      ctx.fillStyle = '#5ac85a'; ctx.font = 'bold 13px Arial';
+      ctx.fillText('SIGN IN', W/2, 524);
+    }
+    ctx.textAlign = 'left';
   }
   ctx.textAlign = 'left';
 }
@@ -2563,6 +3343,59 @@ const FROZEN_PHRASES = [
   'The frost arrived on schedule.','The ice remembers.',
 ];
 
+const EATEN_PHRASES = [
+  'Chomped.','Nom nom.','Lunch.','Snack time.','Crunchy.',
+  'That was the frog.','Swamp tax.','Gator 1, Frog 0.',
+  'Ribbit... gulp.','Toasted by a gator.',
+  'He was waiting.','Ancient predator. Modern frog.',
+  'Saw you coming.','Sneaky? Not you.','Wrong gap.',
+  'The swamp always wins.','Gap too far anyway.',
+  'Should have waited.','Patience: 0. Gator: full.',
+  'Green on green crime.','In another life you were fast.',
+  'Gator brunch.','The water has eyes. And teeth.',
+  'Delicious. 10 out of 10.','Classic gator trap.',
+  'Death by ambush.','He smiled. Then ate you.',
+  'Not a log.','Never a log.','Water check failed.',
+  'One bite.','Whole swamp heard that.',
+  'The chomping hour.','Amphibian cuisine.',
+  'Gator says thanks.','Resting forever now.',
+  'Underestimated the jaw.','Overestimated the gap.',
+  'Diet: frog.','Caught mid-leap.','Unfortunate.',
+  'At least it was quick.','The jaws of defeat.',
+  'Ambushed.','Gap was a trap.','He was always there.',
+  'Gator math: 1 frog equals dinner.','Perfect timing. For him.',
+  'Prehistoric problem.','You leapt. He lunged.',
+  'Ancient reflex beats hopeful leap.','gg frog.',
+  'Size difference was notable.','The swamp just claimed you.',
+  'Water does not forget.','Next time: wait.',
+  'You had so much potential.','The jaw always wins.',
+  'Mid-air helplessness.','Could not out-jump physics.',
+  'Should have taken the long way.','Brave. Wrong.',
+  'Gap: lethal.','Swamp monster: fed.',
+  'The original ambush predator.','No refunds.',
+  '8 seconds of patience. You had zero.',
+  'He waited. You did not.','Patience is survival.',
+  'The gap was his mouth.','Not a safe crossing.',
+  'Tactical error.','Underestimated the resident.',
+  'Gator moment.','You were the snack.',
+  'The swamp sends its regards.','Chomp.',
+  'Bite first. Digest later.','The ambush worked.',
+  'Perfectly timed.','The water remembered.',
+  'You jumped. He judged.','Verdict: eaten.',
+  'No escape trajectory.','Gator lunged. Frog lost.',
+  'Respect the teeth.','Count to 8 next time.',
+  'Impatience is fatal here.','Ancient patience beats modern haste.',
+  'He was still. You were not.','Motion detected. Frog acquired.',
+  'Prey spotted. Prey caught.','Swamp rule 1: check the gap.',
+  'Rule 2: also check the gap.','Zero hesitation on his part.',
+  'The gator kept his word.','Bite mark: deep.',
+  'Ripples fading now.','The swamp is quiet again.',
+  'You were warned. Sort of.','The jaw clapped.',
+  'Midpoint achieved: the mouth.','Technically impressive.',
+  'He lunged at the exact right moment.','Reflex gap: wide.',
+  'Timing was off. His was on.',
+];
+
 const WIN_PHRASES = [
   'You crossed 30 pads. The swamp is yours.','The lily pads bow to you.',
   'Swamp champion.','Unstoppable frog energy.','30 pads. Legendary.',
@@ -2618,16 +3451,19 @@ function pickDeathPhrase() {
   if (deathType === 'water') pool = SPLASH_PHRASES;
   else if (deathType === 'sink') pool = SUNKEN_PHRASES;
   else if (deathType === 'lava') pool = BURNED_PHRASES;
+  else if (deathType === 'eaten') pool = EATEN_PHRASES;
   else pool = FROZEN_PHRASES;
   deathPhraseIdx = Math.floor(Math.random() * pool.length);
 }
 
 // ── Death / Win screens ───────────────────────
 function drawOver() {
-  ctx.fillStyle = 'rgba(0,0,16,0.82)'; ctx.fillRect(0, 0, W, H);
+  const _oe = Date.now() - gameEndTime;
+  const _oa = Math.min(0.82, _oe / 700);
+  ctx.fillStyle = `rgba(0,0,16,${_oa.toFixed(2)})`; ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';
 
-  if (score >= WIN && isNewBest) {
+  if (deathType === 'win') {
     // Win celebration
     ctx.fillStyle = '#ffd700'; ctx.font = 'bold 56px Arial';
     ctx.fillText('WIN!', W/2, 180);
@@ -2640,6 +3476,7 @@ function drawOver() {
       sink:  { heading:'SUNKEN!', col:'#4ab8ff', pool: SUNKEN_PHRASES },
       lava:  { heading:'BURNED!', col:'#ff7720', pool: BURNED_PHRASES },
       ice:   { heading:'FROZEN!', col:'#80d0ff', pool: FROZEN_PHRASES },
+      eaten: { heading:'EATEN!',  col:'#ff2020', pool: EATEN_PHRASES  },
     };
     const cfg = configs[deathType] || configs.water;
     ctx.fillStyle = cfg.col; ctx.font = 'bold 46px Arial'; ctx.fillText(cfg.heading, W/2, 200);
@@ -2708,9 +3545,11 @@ function press(px = W/2, py = H/2) {
     } else if (menuPage === 'frogs') {
       if (inRect(px, py, W/2-70, H-66, 140, 42)) { menuPage = 'main'; return; }
       const cols = 4, cellW = W/cols;
-      const gridTop = 264, gridBot = H-72, cellH = (gridBot-gridTop)/2;
+      const gridTop = 264, gridBot = H-72;
+      const skinRows = Math.ceil(SKINS.length / cols);
+      const cellH = (gridBot-gridTop)/skinRows;
       const col = Math.floor(px / cellW), row = Math.floor((py - gridTop) / cellH);
-      if (row >= 0 && row < 2 && col >= 0 && col < 4) {
+      if (row >= 0 && row < skinRows && col >= 0 && col < 4) {
         const idx = row*4 + col;
         if (idx < SKINS.length && skinOwned(SKINS[idx].id)) {
           equippedSkin = SKINS[idx].id; saveProgress();
@@ -2722,20 +3561,69 @@ function press(px = W/2, py = H/2) {
       if (inRect(px, py, W/2-70, H-66, 140, 42)) { menuPage = 'main'; shopScrollCosm = 0; shopScrollTrail = 0; return; }
       // Tab click
       const tabHits = [
-        { id:'cosmetics', x:W/2-150, w:128 },
-        { id:'trails', x:W/2-10, w:128 },
-        { id:'secret', x:W/2+102, w:128 },
+        { id:'cosmetics', x:8,   w:111 },
+        { id:'trails',    x:125, w:111 },
+        { id:'bundles',   x:242, w:111 },
+        { id:'secret',    x:359, w:111 },
       ];
       for (const tab of tabHits) {
-        if (inRect(px, py, tab.x, 88, tab.w, 30)) { shopSection = tab.id; return; }
+        if (inRect(px, py, tab.x, 88, tab.w, 30)) { shopSection = tab.id; shopPreviewId = null; shopPreviewType = null; return; }
       }
       if (shopSection === 'secret') return;
+
+      if (shopSection === 'bundles') {
+        const BUNDLES = [{ id:'cyborg', label:'CYBORG', cost:500 }];
+        // Buy/Equip button for previewed bundle
+        if (shopPreviewType === 'bundle' && shopPreviewId && inRect(px, py, W/2-70, 218, 140, 34)) {
+          const bid = shopPreviewId;
+          const bundle = BUNDLES.find(b => b.id === bid);
+          if (bundle) {
+            const owned = ownedBundles.includes(bid);
+            if (equippedBundle === bid) { equippedBundle = null; }
+            else if (owned) { equippedBundle = bid; }
+            else if (lilyPadsBalance >= bundle.cost) {
+              lilyPadsBalance -= bundle.cost; ownedBundles.push(bid); equippedBundle = bid;
+            }
+            shopPreviewId = null; shopPreviewType = null; saveProgress();
+          }
+          return;
+        }
+        // Bundle card click → preview
+        const bGridTop = 268;
+        BUNDLES.forEach((bundle, idx) => {
+          const by = bGridTop + idx * 130 + 55;
+          if (inRect(px, py, W/2-150, by-50, 300, 110)) {
+            if (shopPreviewId === bundle.id) { shopPreviewId = null; shopPreviewType = null; }
+            else { shopPreviewId = bundle.id; shopPreviewType = 'bundle'; }
+          }
+        });
+        return;
+      }
 
       const items = shopSection === 'cosmetics' ? ACCESSORIES : TRAILS;
       const scroll = shopSection === 'cosmetics' ? shopScrollCosm : shopScrollTrail;
       const cols = 3, cellW = W / cols;
-      const gridTop = 226, cellH = 90;
+      const gridTop = 262, cellH = 82;
       const visRows = Math.ceil((H - gridTop - 80) / cellH);
+
+      // Buy/Equip button for previewed item
+      const previewType = shopSection === 'cosmetics' ? 'accessory' : 'trail';
+      if (shopPreviewType === previewType && shopPreviewId && inRect(px, py, W/2-70, 218, 140, 34)) {
+        const item2 = items.find(it => it.id === shopPreviewId);
+        if (item2) {
+          if (shopSection === 'cosmetics') {
+            const owned = ownedAccessories.includes(item2.id);
+            if (owned) { equipAccessory(item2.id); }
+            else if (lilyPadsBalance >= item2.cost) { lilyPadsBalance -= item2.cost; ownedAccessories.push(item2.id); equipAccessory(item2.id); }
+          } else {
+            const owned = ownedTrails.includes(item2.id);
+            if (owned) { equippedTrail = equippedTrail === item2.id ? null : item2.id; saveProgress(); }
+            else if (lilyPadsBalance >= item2.cost) { lilyPadsBalance -= item2.cost; ownedTrails.push(item2.id); equippedTrail = item2.id; saveProgress(); }
+          }
+          shopPreviewId = null; shopPreviewType = null;
+        }
+        return;
+      }
 
       // Scroll arrows
       const totalRows = Math.ceil(items.length / cols);
@@ -2759,20 +3647,15 @@ function press(px = W/2, py = H/2) {
 
       if (rowRaw < 0 || rowRaw >= visRows || col < 0 || col >= cols || idx < 0 || idx >= items.length) return;
       const item = items[idx];
+      // Owned items equip directly; unowned items go to preview first
       if (shopSection === 'cosmetics') {
         const owned = ownedAccessories.includes(item.id);
-        if (owned) {
-          equippedAccessory = equippedAccessory === item.id ? null : item.id; saveProgress();
-        } else if (lilyPadsBalance >= item.cost) {
-          lilyPadsBalance -= item.cost; ownedAccessories.push(item.id); equippedAccessory = item.id; saveProgress();
-        }
+        if (owned) { equipAccessory(item.id); shopPreviewId = null; shopPreviewType = null; }
+        else { shopPreviewId = item.id === shopPreviewId ? null : item.id; shopPreviewType = shopPreviewId ? 'accessory' : null; }
       } else {
         const owned = ownedTrails.includes(item.id);
-        if (owned) {
-          equippedTrail = equippedTrail === item.id ? null : item.id; saveProgress();
-        } else if (lilyPadsBalance >= item.cost) {
-          lilyPadsBalance -= item.cost; ownedTrails.push(item.id); equippedTrail = item.id; saveProgress();
-        }
+        if (owned) { equippedTrail = equippedTrail === item.id ? null : item.id; saveProgress(); shopPreviewId = null; shopPreviewType = null; }
+        else { shopPreviewId = item.id === shopPreviewId ? null : item.id; shopPreviewType = shopPreviewId ? 'trail' : null; }
       }
       return;
 
@@ -2785,35 +3668,47 @@ function press(px = W/2, py = H/2) {
         return;
       }
       if (inRect(px, py, W/2-70, 438, 140, 44)) { menuPage = 'main'; return; }
+      if (inRect(px, py, W/2-60, 502, 120, 34)) {
+        if (currentUser) { doLogout(); } else { showAuthOverlay(); }
+        return;
+      }
     }
     return;
   }
 
   if (gs !== 'play') {
     const elapsed = Date.now() - gameEndTime;
-    if (inRect(px, py, W/2-80, 416, 160, 40)) { gs='menu'; menuPage='main'; return; }
-    const btnY = (frog && frog.secondChancePending && !secondChanceUsed && lilyPadsBalance >= 20) ? 398 : 350;
-    if (elapsed > RESTART_DELAY && inRect(px, py, W/2-90, btnY, 180, 52)) { startGame(); return; }
-    if (elapsed > RESTART_DELAY && !inRect(px, py, W/2-80, btnY + 66, 160, 40)) { startGame(); return; }
+    const hasSC = frog && frog.secondChancePending && !secondChanceUsed && lilyPadsBalance >= 20;
+    if (hasSC) {
+      // Second chance layout: SC button y=330, TRY AGAIN y=398, Return to menu y=462
+      if (inRect(px, py, W/2-110, 330, 220, 52)) {
+        lilyPadsBalance -= 20; secondChanceUsed = true;
+        frog.secondChancePending = false;
+        lives = 1; frog.dead = false; gs = 'play';
+        spawnGraceUntil = Date.now() + 2000;
+        invincibleUntil = frame + 120;
+        let respawnPad = curPad;
+        while (respawnPad > 0 && pads[respawnPad].st >= 2) respawnPad--;
+        const rp = pads[respawnPad];
+        frog.x = rp.x; frog.y = rp.y - 23;
+        frog.vx = 0; frog.vy = 0; frog.grounded = true; frog.onIce = false;
+        curPad = respawnPad; saveProgress(); return;
+      }
+      if (inRect(px, py, W/2-90, 398, 180, 52)) { startGame(); return; }
+      if (inRect(px, py, W/2-80, 462, 160, 40)) { gs='menu'; menuPage='main'; return; }
+    } else {
+      // Normal death layout: TRY AGAIN y=350, Return to menu y=416
+      if (inRect(px, py, W/2-90, 350, 180, 52)) { startGame(); return; }
+      if (inRect(px, py, W/2-80, 416, 160, 40)) { gs='menu'; menuPage='main'; return; }
+      // Catch-all: any other click after a short delay also restarts
+      if (elapsed > 1200) { startGame(); return; }
+    }
     return;
   }
 
-  // Second chance: tap anywhere during dead+secondChancePending
-  if (gs === 'dead' && frog && frog.secondChancePending && !secondChanceUsed && lilyPadsBalance >= 20) {
-    if (inRect(px, py, W/2 - 110, 330, 220, 52)) {
-      lilyPadsBalance -= 20; secondChanceUsed = true;
-      frog.secondChancePending = false;
-      lives = 1; frog.dead = false; gs = 'play';
-      spawnGraceUntil = Date.now() + 1500;
-      invincibleUntil = frame + 120;
-      // Respawn on last safe pad
-      let respawnPad = curPad;
-      while (respawnPad > 0 && pads[respawnPad].st >= 2) respawnPad--;
-      const rp = pads[respawnPad];
-      frog.x = rp.x; frog.y = rp.y - 23;
-      frog.vx = 0; frog.vy = 0; frog.grounded = true; frog.onIce = false;
-      curPad = respawnPad; saveProgress(); return;
-    }
+  // Return to Menu button (visible on first pad or post-respawn)
+  if (score === 0 || (frame < invincibleUntil && lives < 3)) {
+    if (inRect(px, py, W - 162, H - 50, 150, 34)) { gs = 'menu'; menuPage = 'main'; return; }
   }
 
   holding = true;
@@ -2833,7 +3728,12 @@ document.addEventListener('keydown', e => {
   }
   if (e.code === 'KeyQ' && !e.repeat && gs === 'play') {
     const f = frog;
-    if (f.grounded && !f.dead) { f.balancing = !f.balancing; if (!f.balancing) f.balanceT = 0; }
+    const canBalance = f.grounded && !f.dead
+      && currentEvent !== 'winter'
+      && currentEvent !== 'volcanic'
+      && curPad !== 0
+      && !(frame < invincibleUntil && lives < 3);
+    if (canBalance) { f.balancing = !f.balancing; if (!f.balancing) f.balanceT = 0; }
   }
 });
 document.addEventListener('keyup', e => { if (e.code === 'Space') { e.preventDefault(); release(); } });
@@ -2847,18 +3747,31 @@ C.addEventListener('touchend', e => { e.preventDefault(); release(); }, { passiv
 function loop() {
   requestAnimationFrame(loop);
   frame++; wv++; tod = (tod + TOD_SPEED) % 1;
+  // Hard-reset all context state before every frame — prevents any leaked alpha,
+  // transform, composite op, or shadow from a previous frame from darkening the scene
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.shadowBlur = 0;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   drawBG();
 
   if (gs === 'play') {
     pads.forEach(padTick);
+    tickGators();
+    // Drift pads left; frog follows if grounded
+    const PAD_DRIFT = 0.4;
+    pads.forEach(p => { p.x -= PAD_DRIFT; });
+    if (frog && frog.grounded) frog.x -= PAD_DRIFT;
+    camX -= PAD_DRIFT; // keep camera in sync
+    if (currentEvent !== 'winter') bgPads.forEach(bp => { bp.x -= PAD_DRIFT * 0.5; });
+    const prevFrogY = frog ? frog.y : 0;
     frogTick();
-    tickParts();
     tickBugs();
     tickEvent();
     camX += (frog.x - 170 - camX) * 0.07;
 
     // Trail update
-    if (equippedTrail) {
+    if (equippedTrail || equippedBundle === 'cyborg') {
       frogTrail.push({ x: frog.x, y: frog.y });
       if (frogTrail.length > 30) frogTrail.shift();
     } else { frogTrail = []; }
@@ -2870,21 +3783,20 @@ function loop() {
       for (let i = curPad + 1; i < Math.min(curPad + 5, pads.length); i++) {
         const p = pads[i];
         if (p.st === 3) continue;
-        if (Math.abs(frog.x - p.x) <= (p.w * padW)/2 - 5 &&
-            frog.y >= p.y - 22 && frog.y <= p.y + 8) {
+        if (Math.abs(frog.x - p.x) <= (p.w * padW)/2 + 4 &&
+            frog.y >= p.y - 24 && prevFrogY <= p.y + 16) {
           frog.grounded = true; frog.vy = 0; frog.vx = 0;
-          frog.sqY = 0.48; frog.sqX = 1.55;
+          frog.alpha = 1;
+          frog.sqY = 0.82; frog.sqX = 1.12;
           frog.y = p.y - 23; frog.onIce = false;
           curPad = i; score++;
           const padMult = Date.now() < padBoostEnd ? 2 : 1;
           lilyPadsTotal += padMult; lilyPadsBalance += padMult;
-          saveProgress();
+          deferredSave();
           spark(frog.x, frog.y, 'land');
-          playLand();
+          setTimeout(playLand, 0);
           padActivate(p);
           if (curPad >= pads.length - 8) extendLevel();
-          // ~10% random heart loss on landing
-          if (Math.random() < 0.10 && Date.now() >= spawnGraceUntil) takeDamage('pad');
           // Win check
           if (score >= WIN && !isNewBest) {
             if (score > best) { best = score; isNewBest = true; }
@@ -2892,7 +3804,7 @@ function loop() {
             if (WIN < 100) WIN = Math.min(100, 30 + (gamesWon - 1) * 10);
             else WIN = Infinity; // endless after reaching 100
             saveProgress();
-            deathType = 'water'; deathFrame = frame;
+            deathType = 'win'; deathFrame = frame;
             frog.dead = true; gs = 'dead'; gameEndTime = Date.now();
             deathPhraseIdx = Math.floor(Math.random() * WIN_PHRASES.length);
           }
@@ -2900,17 +3812,17 @@ function loop() {
         }
       }
       // Ice landing (winter event)
-      if (!frog.grounded && currentEvent === 'winter' && frog.y >= WATER_Y - 4 && frog.y <= WATER_Y + 8) {
+      if (!frog.grounded && currentEvent === 'winter' && frog.y >= WATER_Y - 4 && prevFrogY <= WATER_Y + 8) {
         frog.grounded = true; frog.vy = 0; frog.vx = 0;
-        frog.sqY = 0.55; frog.sqX = 1.4;
+        frog.sqY = 0.84; frog.sqX = 1.10;
         frog.y = WATER_Y - 2;
         frog.onIce = true; frozenDamageTimer = 0;
         spark(frog.x, WATER_Y, 'land');
-        playLand();
+        setTimeout(playLand, 0);
         if (score >= WIN && !isNewBest) {
           if (score > best) { best = score; isNewBest = true; }
           gamesWon++; if (WIN < 100) WIN = Math.min(100, 30 + (gamesWon-1)*10); else WIN = Infinity;
-          saveProgress(); deathType = 'water'; deathFrame = frame;
+          saveProgress(); deathType = 'win'; deathFrame = frame;
           frog.dead = true; gs = 'dead'; gameEndTime = Date.now();
           deathPhraseIdx = Math.floor(Math.random() * WIN_PHRASES.length);
         }
@@ -2928,40 +3840,76 @@ function loop() {
     if (!frog.grounded && !frog.dead && frog.y >= WATER_Y && currentEvent !== 'winter') {
       if (frame >= invincibleUntil) {
         takeDamage('water');
+        // If takeDamage returned early (spawn grace still active), stop frog at surface
+        if (!frog.sinking && !frog.grounded && frog.y >= WATER_Y) {
+          frog.y = WATER_Y - 2; frog.vy = 0; frog.vx = 0;
+        }
       } else {
-        // Bounce back up when invincible
+        // Invincible — bounce
         frog.y = WATER_Y - 4; frog.vy = -4;
       }
     }
 
-    // Draw world
-    drawBgPads();
-    pads.forEach(drawPad);
-    if (currentEvent === 'volcanic') drawLavaBombs();
-    drawBugs();
-    tickParts();
-    drawTrail();
-    drawFrog();
-    drawHUD();
+    // Sinking water animation (non-fatal water damage — wait for splash before respawn)
+    if (frog.sinking) {
+      const t = Math.min(1, (frame - frog.sinking.startFrame) / frog.sinking.duration);
+      if (t >= 1) {
+        // Respawn now — fade in so frog doesn't pop into view
+        const rp = pads[frog.sinking.padIdx];
+        frog.x = rp.x; frog.y = rp.y - 23;
+        frog.vx = 0; frog.vy = 0; frog.alpha = 0;
+        frog.grounded = true; frog.dead = false;
+        frog.sqX = 1; frog.sqY = 1; frog.onIce = false;
+        frog.sinking = null;
+      } else {
+        frog.y = WATER_Y + t * 22;
+        frog.alpha = Math.max(0, 1 - t * 2.2);
+      }
+    }
+
+    // Draw world — reset globalAlpha before each draw step to prevent any alpha leak
+    ctx.globalAlpha = 1; drawBgPads();
+    ctx.globalAlpha = 1; pads.forEach(drawPad);
+    if (currentEvent === 'volcanic') { ctx.globalAlpha = 1; drawLavaBombs(); }
+    ctx.globalAlpha = 1; drawBugs();
+    ctx.globalAlpha = 1; tickParts();
+    ctx.globalAlpha = 1; drawGators();
+    ctx.globalAlpha = 1; drawTrail();
+    if (frog.sinking) {
+      ctx.globalAlpha = 1; drawWaterRipples(waterHitSX, WATER_Y);
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, W, WATER_Y + 6); ctx.clip();
+      ctx.globalAlpha = 1; drawFrog();
+      ctx.restore();
+    } else {
+      ctx.globalAlpha = 1; drawFrog();
+    }
+    ctx.globalAlpha = 1; drawHUD();
 
   } else if (gs === 'menu') {
     drawMenu();
   } else {
     // Dead / win state
     if (Date.now() - gameEndTime > AUTO_MENU_DELAY) { gs = 'menu'; menuPage = 'main'; }
-    if (bgPads) drawBgPads();
-    if (pads) { pads.forEach(drawPad); }
-    tickParts();
-    if (frog) {
-      if (deathType === 'water') {
+    if (bgPads) { ctx.globalAlpha = 1; drawBgPads(); }
+    if (pads) { ctx.globalAlpha = 1; pads.forEach(drawPad); }
+    ctx.globalAlpha = 1; tickParts();
+    ctx.globalAlpha = 1; drawGators();
+    if (deathType === 'win' && frog) {
+      // Win: draw frog on pad BEFORE the overlay so buttons show on top
+      ctx.globalAlpha = 1; drawFrog();
+    }
+    // Overlay (dark tint + text + buttons)
+    ctx.globalAlpha = 1; drawOver();
+    if (frog && deathType !== 'win') {
+      if (deathType === 'water' || deathType === 'eaten') {
         frog.y = Math.min(frog.y + 3.5, WATER_Y + 62);
-        drawWaterRipples(waterHitSX, WATER_Y);
+        ctx.globalAlpha = 1; drawWaterRipples(waterHitSX, WATER_Y);
         ctx.save();
         ctx.beginPath(); ctx.rect(0, 0, W, WATER_Y + 6); ctx.clip();
-        drawFrog(); ctx.restore();
-      } else { frogTick(); drawFrog(); }
+        ctx.globalAlpha = 1; drawFrog(); ctx.restore();
+      } else { frogTick(); ctx.globalAlpha = 1; drawFrog(); }
     }
-    drawOver();
   }
 }
 
