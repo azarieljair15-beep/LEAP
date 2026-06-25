@@ -1290,7 +1290,7 @@ function drawBG() {
       const bl = BG_LILY_PADS[i];
       // Slow parallax drift (closer to bg = slower)
       const _range = W + bl.r * 3 + 360;
-      const bsx = bl.x;
+      const bsx = ((bl.x - camX) % _range + _range) % _range - bl.r * 1.5;
       ctx.globalAlpha = 1;
       // Shadow/depth
       ctx.fillStyle = 'rgba(0,0,0,0.28)';
