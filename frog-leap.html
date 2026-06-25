@@ -1420,7 +1420,7 @@ function padTick(p, i) {
   if (p.st < 1) return;
   // Freeze pad timer while frog is balancing (spring=unlimited balance in frogTick)
   if (i === curPad && frog && frog.grounded && frog.balancing) return;
-  p.t += 1/60;
+  p.t += dtScale / 69;
   const wt = padWarnT();
   const st = padSinkT();
   if (p.st === 1 && p.t >= wt) p.st = 2;
@@ -2061,7 +2061,7 @@ function frogTick() {
   const f = frog;
   if (f.dead) {
     if (f.st !== 3) {
-      f.y = Math.min(f.y + 1.5, pads[curPad].baseY + 80);
+      f.y = Math.min(f.y + 1.5 * dtScale, pads[curPad].baseY + 80);
       f.alpha = Math.max(0.08, 1 - (f.y - (pads[curPad].baseY - 8)) / 58);
     }
     return;
@@ -2072,15 +2072,15 @@ function frogTick() {
   // Alpha fade-in after respawn
   if (f.alpha < 1 && !f.sinking) f.alpha = Math.min(1, f.alpha + 0.07);
   if (!f.grounded) {
-    f.vy += GRAVITY;
-    f.x += f.vx;
-    f.y += f.vy;
+    f.vy += GRAVITY * dtScale;
+    f.x += f.vx * dtScale;
+    f.y += f.vy * dtScale;
     f.rot = Math.atan2(f.vy, f.vx) * 0.28;
   } else {
     f.rot += (-f.rot) * 0.12;
     if (f.charging) {
       const prevCharge = f.charge;
-      f.charge = Math.min(1, f.charge + 0.012);
+      f.charge = Math.min(1, f.charge + 0.012 * dtScale);
       if (equippedBundle === 'cyborg' && prevCharge < 0.5 && f.charge >= 0.5) playCyborgCharge();
     }
     // Cancel balance if in a restricted context
@@ -2496,7 +2496,7 @@ function tickEvent() {
   if (currentEvent && now >= eventEndTime) { endEvent(); return; }
 
   if (currentEvent === 'monsoon') {
-    lightningTimer--;
+    lightningTimer -= dtScale;
     if (lightningTimer <= 0) {
       // Lightning strike: flash the sky, startle the frog, crack of thunder
       lightningFlash = reducedFlashes ? 0.28 : 1;
@@ -4302,11 +4302,15 @@ C.addEventListener('touchstart', e => {
 C.addEventListener('touchend', e => { e.preventDefault(); release(); }, { passive: false });
 
 // ── Main loop ─────────────────────────────────
+const TARGET_MS = 1000 / 69;
 let _lastT = 0;
+let dtScale = 1; // physics multiplier — keeps game speed constant across frame rates
 function loop(ts) {
   requestAnimationFrame(loop);
-  if (ts - _lastT < 14.5) return; // cap at ~69fps (fixes 2× speed on 120Hz displays)
+  const rawDt = _lastT === 0 ? TARGET_MS : ts - _lastT;
+  if (rawDt < TARGET_MS * 0.5) return; // skip duplicate frames (120Hz+)
   _lastT = ts;
+  dtScale = Math.min(rawDt / TARGET_MS, 3); // clamp: never more than 3 steps of catch-up
   frame++; wv++; tod = (tod + TOD_SPEED) % 1;
   // Hard-reset all context state before every frame — prevents any leaked alpha,
   // transform, composite op, or shadow from a previous frame from darkening the scene
@@ -4320,7 +4324,7 @@ function loop(ts) {
     pads.forEach(padTick);
     tickGators();
     // Drift pads left; frog follows if grounded
-    const PAD_DRIFT = 0.4;
+    const PAD_DRIFT = 0.4 * dtScale;
     pads.forEach(p => { p.x -= PAD_DRIFT; });
     if (frog && frog.grounded) frog.x -= PAD_DRIFT;
     camX -= PAD_DRIFT; // keep camera in sync
@@ -4331,19 +4335,19 @@ function loop(ts) {
     // and freeze when it's parked. Ease the scroll speed toward its target so the
     // start and stop of motion is smooth rather than snapping on/off.
     const _lilyTarget = (frog && !frog.grounded && !frog.dead) ? (frog.vx + PAD_DRIFT) : 0;
-    lilyScrollVel += (_lilyTarget - lilyScrollVel) * 0.12;
+    lilyScrollVel += (_lilyTarget - lilyScrollVel) * (1 - Math.pow(0.88, dtScale));
     if (Math.abs(lilyScrollVel) < 0.002) lilyScrollVel = 0;
     lilyScroll += lilyScrollVel;
     // Heart regen: +1 life every 50s while alive and not balancing, max 3
     if (frog && !frog.dead && !frog.balancing && lives < 3) {
-      heartRegenTimer += 1/69; // ~69fps
+      heartRegenTimer += dtScale / 69;
       if (heartRegenTimer >= 50) { heartRegenTimer = 0; lives = Math.min(3, lives + 1); }
     } else if (frog && (frog.dead || frog.balancing)) {
       // freeze timer while dead or balancing
     }
     tickBugs();
     tickEvent();
-    camX += (frog.x - 170 - camX) * 0.07;
+    camX += (frog.x - 170 - camX) * (1 - Math.pow(0.93, dtScale));
 
     // Trail update
     if (equippedTrail || equippedBundle === 'cyborg') {
@@ -4465,7 +4469,7 @@ function loop(ts) {
     }
     // Weather (rain in front of the frog) + lightning flash, then HUD on top
     ctx.globalAlpha = 1; drawMonsoon();
-    if (lightningFlash > 0) lightningFlash *= 0.86;
+    if (lightningFlash > 0) lightningFlash *= Math.pow(0.86, dtScale);
     ctx.globalAlpha = 1; drawHUD();
 
   } else if (gs === 'intro') {
