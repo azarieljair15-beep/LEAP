@@ -2111,8 +2111,15 @@ function frogTick() {
     f.tongueProg -= 0.16;
     if (f.tongueProg <= 0) { f.tongueProg = 0; f.tonguePhase = 'idle'; f.tongueTarget = null; }
   }
-  // Blink — DISABLED (removing all flashing animation for debugging)
-  f.blinking = false; f.blinkFrame = 0; f.blinkTimer = 0;
+  // Blink
+  f.blinkTimer += 1/60;
+  if (!f.blinking && f.blinkTimer > 2.5 + Math.random() * 4) {
+    f.blinking = true; f.blinkFrame = 0; f.blinkTimer = 0;
+  }
+  if (f.blinking) {
+    f.blinkFrame++;
+    if (f.blinkFrame > 9) { f.blinking = false; f.blinkFrame = 0; }
+  }
   if (f.frownTimer > 0) f.frownTimer--;
 }
 
@@ -2652,7 +2659,7 @@ function tickParts() {
     const sx = p.x - camX;
     ctx.save(); ctx.globalAlpha = Math.max(0, p.l);
     ctx.fillStyle = p.c;
-    ctx.beginPath(); ctx.arc(sx, p.y, p.r * p.l, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx, p.y, Math.max(0, p.r * p.l), 0, Math.PI*2); ctx.fill();
     ctx.restore();
   });
 }
