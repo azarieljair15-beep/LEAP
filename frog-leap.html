@@ -1146,20 +1146,23 @@ function drawBG() {
   if (currentEvent !== 'volcanic') {
     const bankCol  = currentEvent === 'winter' ? '#1e2e26' : currentEvent === 'spring' ? '#1e4020' : '#141e10';
     const bankCol2 = currentEvent === 'winter' ? '#28402e' : currentEvent === 'spring' ? '#285230' : '#1a2814';
+    // Bank polygons extend 20px off-screen on each side so no corner is visible
     ctx.fillStyle = bankCol;
-    ctx.beginPath(); ctx.moveTo(0, HORIZON);
-    for (let bx = 0; bx <= W; bx += 18) {
-      const by = HORIZON + 2 + Math.sin(bx * 0.09 + 1.4) * 5 + Math.sin(bx * 0.04) * 8;
+    ctx.beginPath(); ctx.moveTo(-20, HORIZON);
+    for (let bx = -20; bx <= W + 20; bx += 18) {
+      const wx = bx - bgShift;
+      const by = HORIZON + 2 + Math.sin(wx * 0.09 + 1.4) * 5 + Math.sin(wx * 0.04) * 8;
       ctx.lineTo(bx, by);
     }
-    ctx.lineTo(W, HORIZON + 30); ctx.lineTo(0, HORIZON + 30); ctx.closePath(); ctx.fill();
+    ctx.lineTo(W + 20, HORIZON + 30); ctx.lineTo(-20, HORIZON + 30); ctx.closePath(); ctx.fill();
     ctx.fillStyle = bankCol2;
-    ctx.beginPath(); ctx.moveTo(0, HORIZON + 5);
-    for (let bx = 0; bx <= W; bx += 12) {
-      const by = HORIZON + 8 + Math.sin(bx * 0.13 + 2.2) * 4 + Math.sin(bx * 0.05) * 5;
+    ctx.beginPath(); ctx.moveTo(-20, HORIZON + 5);
+    for (let bx = -20; bx <= W + 20; bx += 12) {
+      const wx = bx - bgShift;
+      const by = HORIZON + 8 + Math.sin(wx * 0.13 + 2.2) * 4 + Math.sin(wx * 0.05) * 5;
       ctx.lineTo(bx, by);
     }
-    ctx.lineTo(W, HORIZON + 22); ctx.lineTo(0, HORIZON + 22); ctx.closePath(); ctx.fill();
+    ctx.lineTo(W + 20, HORIZON + 22); ctx.lineTo(-20, HORIZON + 22); ctx.closePath(); ctx.fill();
     // Grass tufts — tiled and scrolled with camera
     const grassCol = currentEvent === 'spring' ? '#3a7228' : '#2a4e1a';
     const gStep = 14, gOff = ((bgShift + 8) % gStep + gStep) % gStep;
