@@ -1149,22 +1149,26 @@ function drawBG() {
     ctx.fillStyle = bankCol;
     ctx.beginPath(); ctx.moveTo(0, HORIZON);
     for (let bx = 0; bx <= W; bx += 18) {
-      const by = HORIZON + 2 + Math.sin(bx * 0.09 + 1.4) * 5 + Math.sin(bx * 0.04) * 8;
+      const wx = bx - bgShift;
+      const by = HORIZON + 2 + Math.sin(wx * 0.09 + 1.4) * 5 + Math.sin(wx * 0.04) * 8;
       ctx.lineTo(bx, by);
     }
     ctx.lineTo(W, HORIZON + 30); ctx.lineTo(0, HORIZON + 30); ctx.closePath(); ctx.fill();
     ctx.fillStyle = bankCol2;
     ctx.beginPath(); ctx.moveTo(0, HORIZON + 5);
     for (let bx = 0; bx <= W; bx += 12) {
-      const by = HORIZON + 8 + Math.sin(bx * 0.13 + 2.2) * 4 + Math.sin(bx * 0.05) * 5;
+      const wx = bx - bgShift;
+      const by = HORIZON + 8 + Math.sin(wx * 0.13 + 2.2) * 4 + Math.sin(wx * 0.05) * 5;
       ctx.lineTo(bx, by);
     }
     ctx.lineTo(W, HORIZON + 22); ctx.lineTo(0, HORIZON + 22); ctx.closePath(); ctx.fill();
-    // Grass tufts
+    // Grass tufts — tiled and scrolled with camera
     const grassCol = currentEvent === 'spring' ? '#3a7228' : '#2a4e1a';
-    for (let gx = 8; gx < W; gx += 14) {
-      const baseY = HORIZON + 9 + Math.sin(gx * 0.13 + 2.2) * 4;
-      const sway = Math.sin(wv * 0.02 + gx * 0.25) * 1.5;
+    const gStep = 14, gOff = ((bgShift + 8) % gStep + gStep) % gStep;
+    for (let gx = gOff; gx < W + gStep; gx += gStep) {
+      const wx = gx - bgShift;
+      const baseY = HORIZON + 9 + Math.sin(wx * 0.13 + 2.2) * 4;
+      const sway = Math.sin(wv * 0.02 + wx * 0.25) * 1.5;
       ctx.strokeStyle = grassCol; ctx.lineWidth = 1.2; ctx.lineCap = 'round';
       ctx.beginPath(); ctx.moveTo(gx, baseY);
       ctx.quadraticCurveTo(gx + sway, baseY - 7, gx + sway * 1.5, baseY - 10); ctx.stroke();
@@ -1450,39 +1454,29 @@ function drawPad(p) {
   if (sx < -150 || sx > W + 150) return;
   const al = padAlpha(p);
   if (al <= 0) return;
-  const padW = p.w * (currentEvent === 'spring' ? 1.4 : currentEvent === 'winter' ? 0.70 : 1);
-  const r  = padW / 2;
-  const ry = Math.max(8, r * 0.30); // flat lily-pad shape like bg pads
+  const r = p.w * (currentEvent === 'spring' ? 1.4 : currentEvent === 'winter' ? 0.70 : 1) / 2;
 
-  const colMain  = currentEvent === 'spring' ? '#4aaa30' : currentEvent === 'winter' ? '#2a7060' : '#347034';
-  const colLight = currentEvent === 'spring' ? '#72d852' : currentEvent === 'winter' ? '#3a9080' : '#52a84e';
-  const colDark  = currentEvent === 'spring' ? '#1e4418' : currentEvent === 'winter' ? '#183830' : '#1a3018';
-  const colLine  = currentEvent === 'spring' ? '#2a5a18' : currentEvent === 'winter' ? '#1a4838' : '#204820';
+  // Identical colors to background lily pads
+  const colMain  = currentEvent === 'winter' ? '#2a4838' : currentEvent === 'spring' ? '#3a8830' : '#2e6228';
+  const colLight = currentEvent === 'winter' ? '#3a5848' : currentEvent === 'spring' ? '#52a840' : '#4a8840';
 
   ctx.save(); ctx.globalAlpha = al;
-  // Shadow
-  if (currentEvent !== 'winter') {
-    ctx.fillStyle = 'rgba(0,0,0,0.22)';
-    ctx.beginPath(); ctx.ellipse(sx + 3, p.y + ry * 0.9, r * 0.90, ry * 0.65, 0, 0, Math.PI*2); ctx.fill();
-  }
+  // Shadow — same as bg pads
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.beginPath(); ctx.ellipse(sx + 2, p.y + 4, r * 0.92, r * 0.28, 0, 0, Math.PI*2); ctx.fill();
   // Main pad
   ctx.fillStyle = colMain;
-  ctx.beginPath(); ctx.ellipse(sx, p.y, r, ry, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(sx, p.y, r, r * 0.32, 0, 0, Math.PI*2); ctx.fill();
   // Highlight
   ctx.fillStyle = colLight;
-  ctx.beginPath(); ctx.ellipse(sx - r*0.07, p.y - ry*0.15, r * 0.70, ry * 0.50, -0.1, 0, Math.PI*2); ctx.fill();
-  // Notch line from centre to edge
-  ctx.strokeStyle = colLine; ctx.lineWidth = 1.4;
-  ctx.beginPath(); ctx.moveTo(sx, p.y - ry); ctx.lineTo(sx, p.y + ry); ctx.stroke();
-  // Outer rim arc (subtle darker border)
-  ctx.strokeStyle = colDark; ctx.lineWidth = 1.0;
-  ctx.beginPath(); ctx.ellipse(sx, p.y, r, ry, 0, 0, Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(sx - r*0.08, p.y - r*0.04, r * 0.72, r * 0.18, -0.1, 0, Math.PI*2); ctx.fill();
+  // Notch line
+  ctx.strokeStyle = colMain; ctx.lineWidth = 0.8;
+  ctx.beginPath(); ctx.moveTo(sx, p.y - r*0.3); ctx.lineTo(sx, p.y + r*0.3); ctx.stroke();
   // Spring flower
-  if (currentEvent === 'spring' && Math.abs(p.x % 3) < 1) {
-    ctx.fillStyle = '#ffaacc';
-    ctx.beginPath(); ctx.arc(sx + r * 0.52, p.y - ry * 0.25, r * 0.10, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#ffe040';
-    ctx.beginPath(); ctx.arc(sx + r * 0.52, p.y - ry * 0.25, r * 0.05, 0, Math.PI*2); ctx.fill();
+  if (currentEvent === 'spring') {
+    ctx.fillStyle = 'rgba(255,200,220,0.7)';
+    ctx.beginPath(); ctx.arc(sx + r*0.25, p.y - r*0.12, r*0.18, 0, Math.PI*2); ctx.fill();
   }
   ctx.restore();
   // Warning ring
@@ -1492,8 +1486,7 @@ function drawPad(p) {
     ctx.save(); ctx.globalAlpha = Math.min(1, urg);
     ctx.strokeStyle = urg > 0.65 ? `rgb(255,${(88*(1-urg))|0},0)` : '#d0a020';
     ctx.lineWidth = 2 + urg * 2;
-    ctx.beginPath();
-    ctx.ellipse(sx, p.y, r + 5, ry + 4, 0, 0, Math.PI*2);
+    ctx.beginPath(); ctx.ellipse(sx, p.y, r + 5, r * 0.32 + 4, 0, 0, Math.PI*2);
     ctx.stroke(); ctx.restore();
   }
 }
