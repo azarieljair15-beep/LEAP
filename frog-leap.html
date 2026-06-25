@@ -3932,7 +3932,12 @@ function loop(ts) {
   if (ts - _lastT < 14.5) return; // cap at ~69fps (fixes 2× speed on 120Hz displays)
   _lastT = ts;
   frame++; wv++; tod = (tod + TOD_SPEED) % 1;
-  if (frog && !frog.grounded) { bgCamX = camX; lilyPadCamX = camX; } else bgCamX += 0.25;
+  if (frog && !frog.grounded) {
+    bgCamX += (camX - bgCamX) * 0.10;
+    lilyPadCamX += (camX - lilyPadCamX) * 0.10;
+  } else {
+    bgCamX += 0.25;
+  }
   // Hard-reset all context state before every frame — prevents any leaked alpha,
   // transform, composite op, or shadow from a previous frame from darkening the scene
   ctx.globalAlpha = 1;
