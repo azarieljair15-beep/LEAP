@@ -1149,16 +1149,14 @@ function drawBG() {
     ctx.fillStyle = bankCol;
     ctx.beginPath(); ctx.moveTo(0, HORIZON);
     for (let bx = 0; bx <= W; bx += 18) {
-      const wx = bx - bgShift;
-      const by = HORIZON + 2 + Math.sin(wx * 0.09 + 1.4) * 5 + Math.sin(wx * 0.04) * 8;
+      const by = HORIZON + 2 + Math.sin(bx * 0.09 + 1.4) * 5 + Math.sin(bx * 0.04) * 8;
       ctx.lineTo(bx, by);
     }
     ctx.lineTo(W, HORIZON + 30); ctx.lineTo(0, HORIZON + 30); ctx.closePath(); ctx.fill();
     ctx.fillStyle = bankCol2;
     ctx.beginPath(); ctx.moveTo(0, HORIZON + 5);
     for (let bx = 0; bx <= W; bx += 12) {
-      const wx = bx - bgShift;
-      const by = HORIZON + 8 + Math.sin(wx * 0.13 + 2.2) * 4 + Math.sin(wx * 0.05) * 5;
+      const by = HORIZON + 8 + Math.sin(bx * 0.13 + 2.2) * 4 + Math.sin(bx * 0.05) * 5;
       ctx.lineTo(bx, by);
     }
     ctx.lineTo(W, HORIZON + 22); ctx.lineTo(0, HORIZON + 22); ctx.closePath(); ctx.fill();
