@@ -412,6 +412,7 @@ let bugs = [];
 let jumpBoostEnd = 0, speedBoostEnd = 0, padBoostEnd = 0;
 let cursorWX = 0, cursorWY = 0;
 let tod = 0.32;
+let frozenCamX = 0;
 
 // ── Lives ─────────────────────────────────────
 let lives = 3;
@@ -1088,7 +1089,8 @@ function drawBG() {
 
   // ── Background parallax shift ─────────────────
   const bgShift = -camX;
-  const lilyBgShift = -camX;
+  if (frog && !frog.grounded) frozenCamX = camX;
+  const lilyBgShift = -frozenCamX;
 
   // ── Far cypress treeline (two depth layers) ──
   // Far layer — shorter, desaturated
@@ -2820,6 +2822,7 @@ function startGame() {
   deathType = null; deathFrame = 0; waterHitWX = 0;
   frog = makeFrog(pads[0].x, pads[0].y - 23);
   camX = frog.x - 170;
+  frozenCamX = camX;
   // Schedule first event 2-4 minutes in
   gameStartTime = Date.now();
   nextEventTime = gameStartTime + 60 * 1000;
