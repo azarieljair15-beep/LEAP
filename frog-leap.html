@@ -1088,9 +1088,7 @@ function drawBG() {
   }
 
   // ── Background parallax shift ─────────────────
-  const bgShift = -camX;
-  if (frog && !frog.grounded) frozenCamX = camX;
-  const lilyBgShift = -frozenCamX;
+  const bgShift = -camX / 3;
 
   // ── Far cypress treeline (two depth layers) ──
   // Far layer — shorter, desaturated
@@ -1292,7 +1290,7 @@ function drawBG() {
       const bl = BG_LILY_PADS[i];
       // Slow parallax drift (closer to bg = slower)
       const _range = W + bl.r * 3 + 360;
-      const bsx = ((bl.x + lilyBgShift) % _range + _range) % _range - bl.r * 1.5;
+      const bsx = ((bl.x + bgShift) % _range + _range) % _range - bl.r * 1.5;
       ctx.globalAlpha = 1;
       // Shadow/depth
       ctx.fillStyle = 'rgba(0,0,0,0.28)';
@@ -1344,22 +1342,6 @@ function drawBG() {
       ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill();
     });
   } else { snowParts = []; }
-
-  // ── Water shimmer (algae-green tint) ─────────
-  const shimA = Math.max(0, 0.16 - nA * 0.12);
-  if (shimA > 0 && currentEvent !== 'winter') {
-    const shimCol = currentEvent === 'volcanic' ? '180,80,20' : currentEvent === 'spring' ? '90,195,80' : '78,168,72';
-    for (let i = 0; i < 10; i++) {
-      const ssx = ((i * 56 + wv * 0.30) % (W + 30));
-      const ssy = WATER_Y + 5 + i * 8;
-      const ssz = Math.max(0, 0.20 + Math.sin(i * 0.92 + wv * 0.052) * 0.28);
-      if (ssz <= 0) continue;
-      ctx.save(); ctx.globalAlpha = ssz * shimA;
-      ctx.fillStyle = `rgb(${shimCol})`;
-      ctx.beginPath(); ctx.ellipse(ssx, ssy, ssz * 28, ssz * 3.5, 0, 0, Math.PI*2); ctx.fill();
-      ctx.restore();
-    }
-  }
 
   // ── Moon reflection (greenish cast) ──────────
   if (nA > 0 && currentEvent !== 'volcanic') {
