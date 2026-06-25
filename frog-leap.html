@@ -1089,7 +1089,7 @@ function drawBG() {
 
   // ── Background parallax shift ─────────────────
   const bgShift = -camX;
-  if (frog && !frog.grounded) frozenCamX += (camX - frozenCamX) * 0.12;
+  if (frog && !frog.grounded) frozenCamX = camX;
   const lilyBgShift = -frozenCamX;
 
   // ── Far cypress treeline (two depth layers) ──
@@ -4043,7 +4043,7 @@ function loop(ts) {
         // Respawn now — fade in so frog doesn't pop into view
         const rp = pads[frog.sinking.padIdx];
         frog.x = rp.x; frog.y = rp.y - 23;
-        frog.vx = 0; frog.vy = 0; frog.alpha = 0;
+        frog.vx = 0; frog.vy = 0; frog.alpha = 1;
         frog.grounded = true; frog.dead = false;
         frog.sqX = 1; frog.sqY = 1; frog.onIce = false;
         frog.sinking = null;
