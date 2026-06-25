@@ -412,6 +412,7 @@ let bugs = [];
 let jumpBoostEnd = 0, speedBoostEnd = 0, padBoostEnd = 0;
 let cursorWX = 0, cursorWY = 0;
 let tod = 0.32;
+let bgCamX = 0;
 
 // ── Lives ─────────────────────────────────────
 let lives = 3;
@@ -867,6 +868,13 @@ const STARS = Array.from({ length: 72 }, (_, i) => ({
   x: (i * 139.7) % W, y: Math.random() * HORIZON * 0.88,
   r: 0.4 + Math.random() * 1.4, tw: Math.random() * Math.PI * 2
 }));
+const CLOUDS = Array.from({ length: 7 }, (_, i) => ({
+  x: i * (W / 7) + Math.random() * 80,
+  y: 22 + Math.random() * 70,
+  rx: 55 + Math.random() * 80,
+  ry: 16 + Math.random() * 18,
+  spd: 0.12 + Math.random() * 0.12,
+}));
 const FLIES = Array.from({ length: 18 }, () => ({
   x: Math.random() * W, y: HORIZON + 20 + Math.random() * 110,
   ph: Math.random() * Math.PI * 2, dx: (Math.random() - 0.5) * 0.28, dy: (Math.random() - 0.5) * 0.14
@@ -993,6 +1001,23 @@ function drawBG() {
   grad.addColorStop(0, rgb(skyTop)); grad.addColorStop(1, rgb(skyBot));
   ctx.fillStyle = grad; ctx.fillRect(0, 0, W, HORIZON);
 
+  // ── Clouds ───────────────────────────────────
+  if (currentEvent !== 'volcanic') {
+    const isNight = nightAlpha(tod) > 0.5;
+    const cloudAlpha = isNight ? 0.82 : 0.80;
+    const cloudCol = isNight ? 'rgba(0,0,0,' : 'rgba(255,255,255,';
+    CLOUDS.forEach(cl => {
+      cl.x -= cl.spd;
+      if (cl.x + cl.rx < 0) cl.x = W + cl.rx;
+      ctx.save(); ctx.globalAlpha = cloudAlpha;
+      ctx.fillStyle = cloudCol + '1)';
+      ctx.beginPath(); ctx.ellipse(cl.x, cl.y, cl.rx, cl.ry, 0, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cl.x - cl.rx*0.28, cl.y - cl.ry*0.55, cl.rx*0.52, cl.ry*0.80, 0, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cl.x + cl.rx*0.22, cl.y - cl.ry*0.45, cl.rx*0.42, cl.ry*0.70, 0, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    });
+  }
+
   // Atmospheric haze band near horizon (swamp humidity)
   if (currentEvent !== 'volcanic') {
     const hazeA = currentEvent === 'winter' ? 0.18 : 0.14 + Math.sin(wv*0.007)*0.04;
@@ -1087,7 +1112,8 @@ function drawBG() {
   }
 
   // ── Background parallax shift ─────────────────
-  const bgShift = -camX;
+  const bgShift = -bgCamX;
+  const lilyBgShift = -camX;
 
   // ── Far cypress treeline (two depth layers) ──
   // Far layer — shorter, desaturated
@@ -1289,7 +1315,7 @@ function drawBG() {
       const bl = BG_LILY_PADS[i];
       // Slow parallax drift (closer to bg = slower)
       const _range = W + bl.r * 3 + 360;
-      const bsx = ((bl.x + bgShift) % _range + _range) % _range - bl.r * 1.5;
+      const bsx = ((bl.x + lilyBgShift) % _range + _range) % _range - bl.r * 1.5;
       ctx.globalAlpha = 1;
       // Shadow/depth
       ctx.fillStyle = 'rgba(0,0,0,0.28)';
@@ -3929,6 +3955,7 @@ function loop(ts) {
   if (ts - _lastT < 14.5) return; // cap at ~69fps (fixes 2× speed on 120Hz displays)
   _lastT = ts;
   frame++; wv++; tod = (tod + TOD_SPEED) % 1;
+  if (frog && !frog.grounded) bgCamX = camX; else bgCamX += 0.25;
   // Hard-reset all context state before every frame — prevents any leaked alpha,
   // transform, composite op, or shadow from a previous frame from darkening the scene
   ctx.globalAlpha = 1;
@@ -4061,7 +4088,6 @@ function loop(ts) {
     }
 
     // Draw world — reset globalAlpha before each draw step to prevent any alpha leak
-    ctx.globalAlpha = 1; drawBgPads();
     ctx.globalAlpha = 1; pads.forEach(drawPad);
     ctx.globalAlpha = 1; drawBugs();
     ctx.globalAlpha = 1; tickParts();
@@ -4083,7 +4109,6 @@ function loop(ts) {
   } else {
     // Dead / win state
     if (Date.now() - gameEndTime > AUTO_MENU_DELAY) { gs = 'menu'; menuPage = 'main'; }
-    if (bgPads) { ctx.globalAlpha = 1; drawBgPads(); }
     if (pads) { ctx.globalAlpha = 1; pads.forEach(drawPad); }
     ctx.globalAlpha = 1; tickParts();
     ctx.globalAlpha = 1; drawGators();
