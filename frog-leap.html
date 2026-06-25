@@ -393,6 +393,7 @@ const ACCESSORIES = [
   { id:'sunhat',     label:'Sun Hat',     cost:75  },
   { id:'blush',      label:'Blush',       cost:30  },
   { id:'smalleyes',  label:'Deep Eyes',   cost:50  },
+  { id:'lilyhat',    label:'Lily Hat',    cost:90  },
 ];
 // Accessories allowed while cyborg bundle is equipped
 const CYBORG_ALLOWED = new Set(['tophat','crown','bowtie','sunhat','smalleyes']);
@@ -444,6 +445,9 @@ let snowParts = [];
 let emberParts = [];   // floating fire embers in the sky (volcanic event)
 let steamParts = [];   // steam wisps rising off the water (volcanic event)
 let dustParts = [];    // tiny ambient dust motes drifting on the wind (always)
+let clouds = [];       // sky clouds — jumpable, grant charge boost
+let chargeBoost = 0;   // extra charge limit from cloud bounce (0..1.5)
+let nextCloudSpawn = 0;// frame counter until next cloud spawns
 let rainParts = [];    // heavy rain streaks (monsoon event)
 let lightningFlash = 0;// 0..1 screen flash intensity from lightning, decays each frame
 let lightningTimer = 0;// frames until next lightning strike (monsoon)
@@ -1170,6 +1174,10 @@ function drawBG() {
 
   // ── Background parallax shift ─────────────────
   const bgShift = -camX / 3;
+  // Plants use lilyScroll (same airborne-only scroll as bg lily pads)
+  const farPlantScroll  = lilyScroll * 0.30;
+  const nearPlantScroll = lilyScroll * 0.55;
+  const gnarledScroll   = lilyScroll * 0.45;
 
   // ── Far cypress treeline (two depth layers) ──
   // Far layer — shorter, desaturated
@@ -1179,7 +1187,8 @@ function drawBG() {
   for (let i = 0; i < CYPRESS_TREES.length; i++) {
     const ct = CYPRESS_TREES[i];
     if (ct.layer === 0) {
-      const sx = ((ct.x + bgShift) % (W + ct.w*2) + W + ct.w*2) % (W + ct.w*2) - ct.w;
+      const range = W + ct.w*2;
+      const sx = ((ct.x - farPlantScroll) % range + range) % range - ct.w;
       if (sx > -50 && sx < W + 50) drawCypress(sx, HORIZON, ct.h * 0.65, ct.w * 0.72, farCol);
     }
   }
@@ -1187,7 +1196,8 @@ function drawBG() {
   for (let i = 0; i < CYPRESS_TREES.length; i++) {
     const ct = CYPRESS_TREES[i];
     if (ct.layer === 1) {
-      const sx = ((ct.x + bgShift) % (W + ct.w*2) + W + ct.w*2) % (W + ct.w*2) - ct.w;
+      const range = W + ct.w*2;
+      const sx = ((ct.x - nearPlantScroll) % range + range) % range - ct.w;
       if (sx > -50 && sx < W + 50) {
         drawCypress(sx, HORIZON, ct.h, ct.w, nearCol);
         // Spanish moss on some near trees
@@ -1201,7 +1211,7 @@ function drawBG() {
   for (let i = 0; i < GNARLED_TREES.length; i++) {
     const gt = GNARLED_TREES[i];
     const gCol = '#161e10';
-    const gsx = ((gt.x + bgShift) % (W + 60) + W + 60) % (W + 60) - 30;
+    const gsx = ((gt.x - gnarledScroll) % (W + 60) + W + 60) % (W + 60) - 30;
     drawGnarledTree(gsx, HORIZON, gt.h, gCol);
   }
   // Spring: blossoms on treeline
@@ -1209,7 +1219,8 @@ function drawBG() {
     for (let i = 0; i < CYPRESS_TREES.length; i++) {
       const ct = CYPRESS_TREES[i];
       if (ct.layer === 1 && ct.w > 11) {
-        const bsx = ((ct.x + bgShift) % (W + ct.w*2) + W + ct.w*2) % (W + ct.w*2) - ct.w;
+        const range = W + ct.w*2;
+        const bsx = ((ct.x - nearPlantScroll) % range + range) % range - ct.w;
         if (bsx > -50 && bsx < W + 50) {
           ctx.fillStyle = `rgba(255,180,210,${0.55 + Math.sin(ct.x * 0.22 + wv*0.01)*0.25})`;
           ctx.beginPath(); ctx.arc(bsx, HORIZON - ct.h * 0.85, ct.w * 0.45, 0, Math.PI*2); ctx.fill();
@@ -1430,6 +1441,34 @@ function padAlpha(p) {
 function padTimeLeft(p) {
   const wt = padWarnT();
   if (p.st === 0) return wt; if (p.st === 1) return Math.max(0, wt - p.t); return 0;
+}
+function spawnCloud() {
+  clouds.push({
+    x: 60 + Math.random() * (W - 120),
+    y: HORIZON - 55 - Math.random() * 110,
+    r: 28 + Math.random() * 22,
+    vx: (Math.random() - 0.5) * 0.35,
+    used: false,
+    fadeAlpha: 1,
+  });
+}
+function drawCloud(c) {
+  const al = c.used ? c.fadeAlpha : 0.90;
+  if (al <= 0.01) return;
+  ctx.save(); ctx.globalAlpha = al;
+  const x = c.x, y = c.y, r = c.r;
+  ctx.fillStyle = '#ddeeff';
+  ctx.beginPath(); ctx.arc(x,          y,          r * 0.60, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x - r*0.44, y + r*0.18, r * 0.46, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x + r*0.44, y + r*0.18, r * 0.46, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x - r*0.18, y + r*0.08, r * 0.52, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x + r*0.22, y + r*0.04, r * 0.44, 0, Math.PI*2); ctx.fill();
+  // Shimmer on fresh cloud
+  if (!c.used) {
+    ctx.fillStyle = `rgba(255,255,200,${0.55 + Math.sin(wv*0.08 + c.x * 0.05) * 0.35})`;
+    ctx.beginPath(); ctx.arc(x + r*0.1, y - r*0.52, 3.5, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
 }
 function drawPad(p) {
   const sx = p.x - camX;
@@ -1767,12 +1806,20 @@ function drawFrog() {
     const bw = 54, bh = 9;
     const bx = sx - bw/2, by = sy - 20 * f.sqY - 30;
     ctx.fillStyle = 'rgba(0,0,0,0.65)';
-    ctx.beginPath(); ctx.roundRect(bx-2, by-2, bw+4, bh+4, 4); ctx.fill();
-    [[0, 0.35, '#c83030'], [0.35, 0.70, '#30b830'], [0.70, 1, '#c83030']].forEach(([s, e, col]) => {
-      ctx.fillStyle = col; ctx.fillRect(bx + s*bw, by, (e-s)*bw, bh);
+    const totalMax = 1 + chargeBoost;
+    const barW = chargeBoost > 0 ? bw * (totalMax / 1.5) : bw; // widen bar when boosted
+    ctx.beginPath(); ctx.roundRect(bx-2, by-2, barW+4, bh+4, 4); ctx.fill();
+    [[0, 0.35, '#c83030'], [0.35, 0.70, '#30b830'], [0.70, 1.0, '#c83030']].forEach(([s, e, col]) => {
+      ctx.fillStyle = col; ctx.fillRect(bx + s*barW, by, (e-s)*barW, bh);
     });
+    // Boost zone — extra bar section shown in cloud-blue
+    if (chargeBoost > 0) {
+      ctx.fillStyle = '#60ccff';
+      ctx.fillRect(bx + barW * (1/totalMax), by, barW * (chargeBoost/totalMax), bh);
+    }
+    const fillW = (f.charge / totalMax) * barW;
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(bx + f.charge*bw, by, bw*(1-f.charge), bh);
+    ctx.fillRect(bx + fillW, by, barW - fillW, bh);
     ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1.5;
     ctx.strokeRect(bx + 0.35*bw, by-1, 0.35*bw, bh+2);
     ctx.fillStyle = '#bbb'; ctx.font = '9px Arial';
@@ -1842,6 +1889,28 @@ function drawAccessory(accId) {
     ctx.fillStyle = '#d42020';
     ctx.beginPath(); ctx.ellipse(-17,-10,6,4,0,0,Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.ellipse( 17,-10,6,4,0,0,Math.PI*2); ctx.fill();
+  } else if (accId === 'lilyhat') {
+    // Lily pad sitting on the frog's head
+    ctx.save();
+    ctx.translate(0, -34);
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.beginPath(); ctx.ellipse(2, 4, 15, 4, 0, 0, Math.PI*2); ctx.fill();
+    // Pad body
+    ctx.fillStyle = '#2e6228';
+    ctx.beginPath(); ctx.ellipse(0, 0, 14, 4.5, 0, 0, Math.PI*2); ctx.fill();
+    // Highlight
+    ctx.fillStyle = '#4a8840';
+    ctx.beginPath(); ctx.ellipse(-1, -0.5, 10, 2.8, -0.1, 0, Math.PI*2); ctx.fill();
+    // Notch line
+    ctx.strokeStyle = '#2e6228'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(0, -4); ctx.lineTo(0, 4); ctx.stroke();
+    // Small flower on top
+    ctx.fillStyle = 'rgba(255,200,220,0.85)';
+    ctx.beginPath(); ctx.arc(4, -1, 2.5, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#ffff88';
+    ctx.beginPath(); ctx.arc(4, -1, 1.2, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
   } else if (accId === 'roboticeye') {
     ctx.fillStyle = '#202030';
     ctx.beginPath(); ctx.arc(10,-22,11,0,Math.PI*2); ctx.fill();
@@ -1900,6 +1969,15 @@ function drawAccessory(accId) {
     ctx.beginPath(); ctx.arc(0, 0, 3.5, 0, Math.PI*2); ctx.fill();
     ctx.strokeStyle = '#006699'; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI*2); ctx.stroke();
+  } else if (id === 'lilyhat') {
+    ctx.fillStyle = '#2e6228';
+    ctx.beginPath(); ctx.ellipse(0, 0, 13, 4, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#4a8840';
+    ctx.beginPath(); ctx.ellipse(-1, -0.5, 9, 2.5, -0.1, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#2e6228'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(0,-4); ctx.lineTo(0,4); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,200,220,0.9)';
+    ctx.beginPath(); ctx.arc(4, -1, 2.5, 0, Math.PI*2); ctx.fill();
   } else if (id === 'tongueout') {
     ctx.fillStyle = '#d040a0';
     ctx.beginPath(); ctx.ellipse(0, -3, 5, 3, 0, 0, Math.PI*2); ctx.fill();
@@ -2040,7 +2118,7 @@ function frogTick() {
     f.rot += (-f.rot) * 0.12;
     if (f.charging) {
       const prevCharge = f.charge;
-      f.charge = Math.min(1, f.charge + 0.012);
+      f.charge = Math.min(1 + chargeBoost, f.charge + 0.012);
       if (equippedBundle === 'cyborg' && prevCharge < 0.5 && f.charge >= 0.5) playCyborgCharge();
     }
     // Cancel balance if in a restricted context
@@ -2881,6 +2959,7 @@ function startGame() {
   score = 0; isNewBest = false; frame = 0; wv = 0;
   holding = false; curPad = 0;
   lives = 3; invincibleUntil = 0; lastDamageType = null; heartRegenTimer = 0;
+  clouds = []; chargeBoost = 0; nextCloudSpawn = 300;
   secondChanceUsed = false;
   spawnGraceUntil = Date.now() + 1500;
   frogOnIce = false; frozenDamageTimer = 0;
@@ -4270,6 +4349,39 @@ function loop(ts) {
     tickEvent();
     camX += (frog.x - 170 - camX) * 0.07;
 
+    // Cloud spawn & tick
+    nextCloudSpawn--;
+    if (nextCloudSpawn <= 0) {
+      if (clouds.length < 5) spawnCloud();
+      nextCloudSpawn = 380 + Math.floor(Math.random() * 200); // ~6-9s
+    }
+    for (let ci = clouds.length - 1; ci >= 0; ci--) {
+      const c = clouds[ci];
+      c.x += c.vx;
+      if (c.x < -80) c.x = W + 80;
+      if (c.x > W + 80) c.x = -80;
+      if (c.used) {
+        c.fadeAlpha -= 0.012;
+        if (c.fadeAlpha <= 0) { clouds.splice(ci, 1); continue; }
+      }
+    }
+    // Cloud collision — frog hits cloud from below while falling
+    if (!frog.grounded && !frog.dead && frog.vy > 0) {
+      const fsx = frog.x - camX;
+      for (let ci = 0; ci < clouds.length; ci++) {
+        const c = clouds[ci];
+        if (c.used) continue;
+        if (Math.abs(fsx - c.x) <= c.r * 0.85 &&
+            frog.y >= c.y - 10 && prevFrogY <= c.y + 8) {
+          chargeBoost = Math.min(1.5, chargeBoost + 0.45);
+          c.used = true; c.fadeAlpha = 1;
+          frog.vy = -3.5; // small bounce so you keep moving
+          spark(frog.x, frog.y, 'land');
+          break;
+        }
+      }
+    }
+
     // Trail update
     if (equippedTrail || equippedBundle === 'cyborg') {
       frogTrail.push({ x: frog.x, y: frog.y });
@@ -4289,6 +4401,7 @@ function loop(ts) {
           frog.alpha = 1;
           frog.sqY = 0.82; frog.sqX = 1.12;
           frog.y = p.y - 23; frog.onIce = false;
+          chargeBoost = 0;
           curPad = i; score++;
           const padMult = Date.now() < padBoostEnd ? 2 : 1;
           lilyPadsTotal += padMult; lilyPadsBalance += padMult;
@@ -4364,6 +4477,7 @@ function loop(ts) {
     }
 
     // Draw world — reset globalAlpha before each draw step to prevent any alpha leak
+    ctx.globalAlpha = 1; clouds.forEach(drawCloud);
     ctx.globalAlpha = 1; pads.forEach(drawPad);
     ctx.globalAlpha = 1; drawBugs();
     ctx.globalAlpha = 1; tickParts();
