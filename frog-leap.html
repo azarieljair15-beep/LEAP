@@ -1404,7 +1404,7 @@ function padWarnT() {
   return currentEvent === 'spring' ? WARN_T * 2.5 : currentEvent === 'monsoon' ? WARN_T * 0.5 : WARN_T;
 }
 function padSinkT() {
-  return currentEvent === 'spring' ? SINK_T * 2 : currentEvent === 'monsoon' ? SINK_T * 0.55 : SINK_T;
+  return currentEvent === 'spring' ? SINK_T * 2 : currentEvent === 'monsoon' ? SINK_T * 0.85 : SINK_T;
 }
 function makePad(x, y, w) { return { x, y, baseY:y, w, st:0, t:-1 }; }
 function padTick(p, i) {
@@ -2058,8 +2058,9 @@ function frogTick() {
       }
     }
 
-    // Sink detection
-    if (curPad >= 0 && curPad < pads.length && pads[curPad].st === 3 && !f.onIce) {
+    // Ride sinking pad down and fade out
+    if (curPad >= 0 && curPad < pads.length && pads[curPad].st >= 2 && !f.onIce) {
+      f.y = pads[curPad].y;
       const surface = pads[curPad].baseY - 8;
       if (f.y > surface) {
         f.alpha = Math.max(0.08, 1 - (f.y - surface) / 58);
