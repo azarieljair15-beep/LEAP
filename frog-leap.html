@@ -1089,6 +1089,7 @@ function drawBG() {
 
   // ── Background parallax shift ─────────────────
   const bgShift = -camX / 3;
+  if (frog && !frog.grounded) frozenCamX = camX;
 
   // ── Far cypress treeline (two depth layers) ──
   // Far layer — shorter, desaturated
@@ -1292,9 +1293,6 @@ function drawBG() {
       const _range = W + bl.r * 3 + 360;
       const bsx = ((bl.x - camX) % _range + _range) % _range - bl.r * 1.5;
       ctx.globalAlpha = 1;
-      // Shadow/depth
-      ctx.fillStyle = 'rgba(0,0,0,0.28)';
-      ctx.beginPath(); ctx.ellipse(bsx + 2, bl.y + 4, bl.r * 0.92, bl.r * 0.28, 0, 0, Math.PI*2); ctx.fill();
       // Pad
       ctx.fillStyle = bgPadCol;
       ctx.beginPath(); ctx.ellipse(bsx, bl.y, bl.r, bl.r * 0.32, 0, 0, Math.PI*2); ctx.fill();
