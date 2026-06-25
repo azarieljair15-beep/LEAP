@@ -414,6 +414,7 @@ let cursorWX = 0, cursorWY = 0;
 let tod = 0.32;
 let frozenCamX = 0;
 let lilyScroll = 0; // bg lily pad scroll — advances only while frog is airborne
+let lilyScrollVel = 0; // eased scroll speed for smooth start/stop
 
 // ── Lives ─────────────────────────────────────
 let lives = 3;
@@ -437,6 +438,9 @@ let snowParts = [];
 let emberParts = [];   // floating fire embers in the sky (volcanic event)
 let steamParts = [];   // steam wisps rising off the water (volcanic event)
 let dustParts = [];    // tiny ambient dust motes drifting on the wind (always)
+let rainParts = [];    // heavy rain streaks (monsoon event)
+let lightningFlash = 0;// 0..1 screen flash intensity from lightning, decays each frame
+let lightningTimer = 0;// frames until next lightning strike (monsoon)
 
 // ── Menu / Settings ───────────────────────────
 let menuPage = 'main';
@@ -719,7 +723,7 @@ function startAmbience() {
     (function chirp() {
       if (!AmbiAC) return;
       if (AmbiAC.state !== 'running') { setTimeout(chirp, 200); return; }
-      if (currentEvent === 'winter' || currentEvent === 'volcanic') { setTimeout(chirp, 2000); return; }
+      if (currentEvent === 'winter' || currentEvent === 'volcanic' || currentEvent === 'monsoon') { setTimeout(chirp, 2000); return; }
       const nA = nightAlpha(tod);
       if (nA > 0.15) {
         const t = ac.currentTime, vol = 0.035 + nA * 0.038;
@@ -739,7 +743,7 @@ function startAmbience() {
     (function birdCall() {
       if (!AmbiAC) return;
       if (AmbiAC.state !== 'running') { setTimeout(birdCall, 300); return; }
-      if (currentEvent === 'winter' || currentEvent === 'volcanic') { setTimeout(birdCall, 2000); return; }
+      if (currentEvent === 'winter' || currentEvent === 'volcanic' || currentEvent === 'monsoon') { setTimeout(birdCall, 2000); return; }
       const nA = nightAlpha(tod);
       const dayVol = Math.max(0, 1 - nA * 2.2);
       if (dayVol > 0.08) {
@@ -764,7 +768,7 @@ function startAmbience() {
     (function frogCroak() {
       if (!AmbiAC) return;
       if (AmbiAC.state !== 'running') { setTimeout(frogCroak, 400); return; }
-      if (currentEvent === 'winter' || currentEvent === 'volcanic') { setTimeout(frogCroak, 2000); return; }
+      if (currentEvent === 'winter' || currentEvent === 'volcanic' || currentEvent === 'monsoon') { setTimeout(frogCroak, 2000); return; }
       const nA = nightAlpha(tod);
       const vol = 0.03 + nA * 0.04;
       const t = ac.currentTime;
@@ -786,7 +790,7 @@ function startAmbience() {
     (function owlHoot() {
       if (!AmbiAC) return;
       if (AmbiAC.state !== 'running') { setTimeout(owlHoot, 600); return; }
-      if (currentEvent === 'winter' || currentEvent === 'volcanic') { setTimeout(owlHoot, 2000); return; }
+      if (currentEvent === 'winter' || currentEvent === 'volcanic' || currentEvent === 'monsoon') { setTimeout(owlHoot, 2000); return; }
       const nA = nightAlpha(tod);
       if (nA > 0.55) {
         const t = ac.currentTime;
@@ -987,6 +991,10 @@ function drawBG() {
     const s = interpStops(SKY_STOPS, tod);
     skyTop = lerpC(s.top, [78,155,95], 0.42);
     skyBot = lerpC(s.bot, [44,105,60], 0.42);
+  } else if (currentEvent === 'monsoon') {
+    const s = interpStops(SKY_STOPS, tod);
+    skyTop = lerpC(s.top, [40,46,54], 0.72);
+    skyBot = lerpC(s.bot, [58,64,72], 0.72);
   } else {
     const s = interpStops(SKY_STOPS, tod);
     skyTop = s.top; skyBot = s.bot;
@@ -1216,7 +1224,9 @@ function drawBG() {
 
   // ── Ground mist / fog layers ─────────────────
   if (currentEvent !== 'volcanic') {
-    const baseA = currentEvent === 'winter' ? 0.30 : 0.18 + Math.sin(wv*0.007)*0.05;
+    const baseA = currentEvent === 'monsoon' ? 0.52 + Math.sin(wv*0.01)*0.06
+                : currentEvent === 'winter' ? 0.30
+                : 0.18 + Math.sin(wv*0.007)*0.05;
     // Main fog band at horizon
     const fg = ctx.createLinearGradient(0, HORIZON - 8, 0, HORIZON + 60);
     fg.addColorStop(0,   'rgba(120,155,108,0)');
@@ -1411,6 +1421,13 @@ function drawBG() {
 }
 
 // ── Pad helpers ───────────────────────────────
+// Warn/sink durations vary per event: spring is forgiving, monsoon sinks fast.
+function padWarnT() {
+  return currentEvent === 'spring' ? WARN_T * 2.5 : currentEvent === 'monsoon' ? WARN_T * 0.5 : WARN_T;
+}
+function padSinkT() {
+  return currentEvent === 'spring' ? SINK_T * 2 : currentEvent === 'monsoon' ? SINK_T * 0.55 : SINK_T;
+}
 function makePad(x, y, w) { return { x, y, baseY:y, w, st:0, t:-1 }; }
 function padTick(p, i) {
   if (p.st < 1) return;
@@ -1418,8 +1435,8 @@ function padTick(p, i) {
   // Freeze pad timer while frog is balancing (spring=unlimited balance in frogTick)
   if (i === curPad && frog && frog.grounded && frog.balancing) return;
   p.t += 1/60;
-  const wt = currentEvent === 'spring' ? WARN_T * 2.5 : WARN_T;
-  const st = currentEvent === 'spring' ? SINK_T * 2 : SINK_T;
+  const wt = padWarnT();
+  const st = padSinkT();
   if (p.st === 1 && p.t >= wt) p.st = 2;
   if (p.st === 2) {
     const s = (p.t - wt) / st;
@@ -1428,13 +1445,13 @@ function padTick(p, i) {
   }
 }
 function padActivate(p) { if (p.st === 0) { p.st = 1; p.t = 0; } }
-function padAlpha(p) { 
-  const wt = currentEvent === 'spring' ? WARN_T * 2.5 : WARN_T;
-  const st = currentEvent === 'spring' ? SINK_T * 2 : SINK_T;
-  if (p.st < 2) return 1; return Math.max(0, 1 - (p.t - wt) / st); 
+function padAlpha(p) {
+  const wt = padWarnT();
+  const st = padSinkT();
+  if (p.st < 2) return 1; return Math.max(0, 1 - (p.t - wt) / st);
 }
 function padTimeLeft(p) {
-  const wt = currentEvent === 'spring' ? WARN_T * 2.5 : WARN_T;
+  const wt = padWarnT();
   if (p.st === 0) return wt; if (p.st === 1) return Math.max(0, wt - p.t); return 0;
 }
 function drawPad(p) {
@@ -1469,7 +1486,7 @@ function drawPad(p) {
   ctx.restore();
   // Warning ring
   if (p.st === 1) {
-    const wt = currentEvent === 'spring' ? WARN_T * 2.5 : WARN_T;
+    const wt = padWarnT();
     const urg = p.t / wt;
     ctx.save(); ctx.globalAlpha = Math.min(1, urg);
     ctx.strokeStyle = urg > 0.65 ? `rgb(255,${(88*(1-urg))|0},0)` : '#d0a020';
@@ -1486,7 +1503,7 @@ function makeFrog(x, y) {
     grounded:true, dead:false, alpha:1,
     charging:false, charge:0, balancing:false, balanceT:0,
     tonguePhase:'idle', tongueProg:0, tongueAngle:0, tongueLen:0, tongueTarget:null,
-    tongueCooldown:6, frownTimer:0,
+    tongueCooldown:6, frownTimer:0, scaredTimer:0,
     blinking:false, blinkFrame:0, blinkTimer:0,
     onIce: false
   };
@@ -1525,9 +1542,11 @@ function drawFrog() {
   const f = frog;
   if (f.alpha <= 0) return;
   const sx = f.x - camX, sy = f.y;
+  // Frightened tremble (e.g. monsoon lightning)
+  const trem = (f.scaredTimer > 0 && f.grounded) ? Math.sin(frame * 1.7) * 1.1 * Math.min(1, f.scaredTimer / 30) : 0;
   ctx.save();
   ctx.globalAlpha = f.alpha;
-  ctx.translate(sx, sy);
+  ctx.translate(sx + trem, sy);
   ctx.rotate(f.rot);
   ctx.scale(f.sqX, f.sqY);
 
@@ -1609,7 +1628,14 @@ function drawFrog() {
   });
 
   // Mouth
-  if (f.tonguePhase !== 'idle') {
+  if (f.scaredTimer > 0 && f.tonguePhase === 'idle') {
+    // Frightened: a small quivering open "O" mouth
+    const q = Math.sin(frame * 0.9) * 0.6;
+    ctx.fillStyle = '#3a1020';
+    ctx.beginPath(); ctx.ellipse(0, -8 + q, 3.4, 4.2, 0, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = olCol; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.ellipse(0, -8 + q, 3.4, 4.2, 0, 0, Math.PI*2); ctx.stroke();
+  } else if (f.tonguePhase !== 'idle') {
     ctx.fillStyle = '#e04080';
     ctx.beginPath(); ctx.ellipse(0, -9, 6, 4, 0, 0, Math.PI*2); ctx.fill();
   } else {
@@ -2120,6 +2146,7 @@ function frogTick() {
     if (f.blinkFrame > 9) { f.blinking = false; f.blinkFrame = 0; }
   }
   if (f.frownTimer > 0) f.frownTimer--;
+  if (f.scaredTimer > 0) f.scaredTimer--;
 }
 
 function frogJump() {
@@ -2211,6 +2238,7 @@ function takeDamage(type) {
 let gameStartTime = 0; // Date.now() at game start
 let nextEventTime = 0; // Date.now() when next event triggers
 let eventEndTime  = 0; // Date.now() when current event ends
+let lastEvent     = null; // last event type, to avoid immediate repeats
 
 // ── Event ambience ────────────────────────────
 let eventAmbiAC = null;
@@ -2365,6 +2393,60 @@ function startVolcanicAmbience() {
   } catch(e) {}
 }
 
+function startMonsoonAmbience() {
+  stopEventAmbience();
+  if (!ambienceOn) return;
+  try {
+    eventAmbiAC = new (window.AudioContext || window.webkitAudioContext)();
+    const ac = eventAmbiAC;
+    const sr = ac.sampleRate;
+    // Heavy rain — continuous filtered white noise, fairly loud
+    const buf = ac.createBuffer(1, sr * 4, sr);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random()*2-1);
+    const src = ac.createBufferSource(); src.buffer = buf; src.loop = true;
+    const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 800;
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 7000;
+    const g = ac.createGain(); g.gain.value = 0.11;
+    src.connect(hp); hp.connect(lp); lp.connect(g); g.connect(ac.destination); src.start();
+    // Lower "hiss" layer for body of the downpour
+    const buf2 = ac.createBuffer(1, sr * 4, sr);
+    const d2 = buf2.getChannelData(0);
+    for (let i = 0; i < d2.length; i++) d2[i] = (Math.random()*2-1);
+    const src2 = ac.createBufferSource(); src2.buffer = buf2; src2.loop = true;
+    const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2200; bp.Q.value = 0.4;
+    const g2 = ac.createGain(); g2.gain.value = 0.05;
+    src2.connect(bp); bp.connect(g2); g2.connect(ac.destination); src2.start();
+  } catch(e) {}
+}
+function thunderClap() {
+  if (!ambienceOn) return;
+  try {
+    const ac = eventAmbiAC; if (!ac || ac.state === 'closed') return;
+    const t = ac.currentTime;
+    const sr = ac.sampleRate;
+    // Low rumbling boom: noise burst through a sweeping lowpass
+    const dur = 1.6 + Math.random() * 1.2;
+    const buf = ac.createBuffer(1, (sr * dur)|0, sr);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random()*2-1) * Math.pow(1 - i/d.length, 1.4);
+    const ns = ac.createBufferSource(); ns.buffer = buf;
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(420, t);
+    lp.frequency.exponentialRampToValueAtTime(60, t + dur);
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.32, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    ns.connect(lp); lp.connect(g); g.connect(ac.destination); ns.start(t); ns.stop(t + dur);
+    // Sharp initial crack
+    const o = ac.createOscillator(), og = ac.createGain();
+    o.type = 'square'; o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(50, t + 0.25);
+    og.gain.setValueAtTime(0.12, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    o.connect(og); og.connect(ac.destination); o.start(t); o.stop(t + 0.32);
+  } catch(e) {}
+}
+
 function startEvent(type) {
   currentEvent = type;
   const dur = 75 * 1000; // 75 seconds
@@ -2380,6 +2462,10 @@ function startEvent(type) {
     startWinterAmbience();
   } else if (type === 'spring') {
     startSpringAmbience();
+  } else if (type === 'monsoon') {
+    rainParts = []; lightningFlash = 0;
+    lightningTimer = 180 + Math.floor(Math.random() * 240);
+    startMonsoonAmbience();
   }
 }
 
@@ -2388,14 +2474,18 @@ function endEvent() {
   currentEvent = null;
   lavaBombs = [];
   emberParts = []; steamParts = [];
+  rainParts = []; lightningFlash = 0;
 }
 
 function tickEvent() {
   if (!frog || frog.dead) return;
   const now = Date.now();
-  // Start event if time reached
+  // Start event if time reached — pick a random event, avoiding an immediate repeat
   if (!currentEvent && now >= nextEventTime) {
-    startEvent('spring');
+    const pool = ['spring', 'volcanic', 'winter', 'monsoon'].filter(e => e !== lastEvent);
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    lastEvent = pick;
+    startEvent(pick);
   }
   // End event when time up
   if (currentEvent && now >= eventEndTime) { endEvent(); return; }
@@ -2424,6 +2514,17 @@ function tickEvent() {
     });
     lavaBombs = lavaBombs.filter(lb => lb.alive || lb.y < WATER_Y + 10);
   }
+
+  if (currentEvent === 'monsoon') {
+    lightningTimer--;
+    if (lightningTimer <= 0) {
+      // Lightning strike: flash the sky, startle the frog, crack of thunder
+      lightningFlash = 1;
+      if (frog && !frog.dead) frog.scaredTimer = 70;
+      thunderClap();
+      lightningTimer = 220 + Math.floor(Math.random() * 380);
+    }
+  }
 }
 
 function drawLavaBombs() {
@@ -2444,6 +2545,51 @@ function drawLavaBombs() {
     ctx.fillStyle = '#ff6010';
     ctx.beginPath(); ctx.arc(sx+1, lb.y+1, lb.r * 0.6, 0, Math.PI*2); ctx.fill();
   });
+}
+
+// ── Monsoon weather (rain, fog veil, lightning) ─
+function drawMonsoon() {
+  if (currentEvent !== 'monsoon') return;
+  // Dense drifting fog veil over the whole scene
+  ctx.save();
+  const veilA = 0.16 + Math.sin(wv * 0.01) * 0.03;
+  ctx.fillStyle = `rgba(150,160,170,${veilA})`;
+  ctx.fillRect(0, HORIZON - 10, W, H - HORIZON + 10);
+  ctx.restore();
+
+  // Heavy rain — many slanted streaks falling fast
+  while (rainParts.length < 220) {
+    rainParts.push({
+      x: Math.random() * (W + 120) - 60,
+      y: Math.random() * H,
+      len: 12 + Math.random() * 16,
+      spd: 16 + Math.random() * 12,
+      a: 0.18 + Math.random() * 0.3
+    });
+  }
+  const slant = 3.2; // horizontal drift per frame (wind)
+  ctx.save();
+  ctx.lineCap = 'round';
+  for (let i = 0; i < rainParts.length; i++) {
+    const r = rainParts[i];
+    r.y += r.spd; r.x -= slant;
+    if (r.y > H + 20 || r.x < -80) { r.y = -20; r.x = Math.random() * (W + 120) - 30; }
+    ctx.strokeStyle = `rgba(190,205,225,${r.a})`;
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(r.x, r.y);
+    ctx.lineTo(r.x - slant * (r.len / r.spd), r.y - r.len);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Lightning flash overlay (decays in the main loop)
+  if (lightningFlash > 0.01) {
+    ctx.save();
+    ctx.fillStyle = `rgba(235,240,255,${lightningFlash * 0.55})`;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
 }
 
 // ── Alligators ─────────────────────────────────
@@ -2482,8 +2628,9 @@ function tickGators() {
   if (currentEvent === 'winter') { gators = []; return; }
   // Spawn cooldown
   gatorSpawnCooldown--;
-  if (gatorSpawnCooldown <= 0 && gators.length < 2 && score >= 4) {
-    if (Math.random() < 0.004) { trySpawnGator(); gatorSpawnCooldown = 480; }
+  const _gatorMax = currentEvent === 'monsoon' ? 4 : 3;
+  if (gatorSpawnCooldown <= 0 && gators.length < _gatorMax && score >= 3) {
+    if (Math.random() < 0.013) { trySpawnGator(); gatorSpawnCooldown = 210; }
   }
   gators.forEach(g => {
     g.timer++;
@@ -2807,7 +2954,8 @@ function startGame() {
   frog = makeFrog(pads[0].x, pads[0].y - 23);
   camX = frog.x - 170;
   frozenCamX = camX;
-  lilyScroll = 0;
+  lilyScroll = 0; lilyScrollVel = 0;
+  rainParts = []; lightningFlash = 0; lightningTimer = 0;
   // Schedule first event 2-4 minutes in
   gameStartTime = Date.now();
   nextEventTime = gameStartTime + 60 * 1000;
@@ -2846,8 +2994,8 @@ function drawHUD() {
 
   // Event indicator
   if (currentEvent) {
-    const evNames = { volcanic:'🌋 VOLCANIC', winter:'❄️ WINTER', spring:'🌸 SPRING' };
-    const evCols  = { volcanic:'#ff6030', winter:'#80c8ff', spring:'#80ff80' };
+    const evNames = { volcanic:'🌋 VOLCANIC', winter:'❄️ WINTER', spring:'🌸 SPRING', monsoon:'🌧️ MONSOON' };
+    const evCols  = { volcanic:'#ff6030', winter:'#80c8ff', spring:'#80ff80', monsoon:'#9fb4d8' };
     const evText  = evNames[currentEvent] || '';
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.beginPath(); ctx.roundRect(W/2 - 70, 12, 140, 28, 8); ctx.fill();
@@ -2908,7 +3056,7 @@ function drawHUD() {
   // JUMP timer
   if (!frog.balancing) {
     const cp = pads[curPad], tl = padTimeLeft(cp);
-    const wt = currentEvent === 'spring' ? WARN_T * 2.5 : WARN_T;
+    const wt = padWarnT();
     if (tl < wt * 0.5 && tl > 0) {
       const pulse = 0.75 + Math.sin(frame * 0.25) * 0.25;
       ctx.save(); ctx.globalAlpha = pulse;
@@ -3938,8 +4086,12 @@ function loop(ts) {
     const prevFrogY = frog ? frog.y : 0;
     frogTick();
     // Bg lily pads scroll only while the frog is actually airborne (a real leap),
-    // and freeze when it's parked on a pad — matches the frog's forward motion.
-    if (frog && !frog.grounded && !frog.dead) lilyScroll += frog.vx + PAD_DRIFT;
+    // and freeze when it's parked. Ease the scroll speed toward its target so the
+    // start and stop of motion is smooth rather than snapping on/off.
+    const _lilyTarget = (frog && !frog.grounded && !frog.dead) ? (frog.vx + PAD_DRIFT) : 0;
+    lilyScrollVel += (_lilyTarget - lilyScrollVel) * 0.12;
+    if (Math.abs(lilyScrollVel) < 0.002) lilyScrollVel = 0;
+    lilyScroll += lilyScrollVel;
     tickBugs();
     tickEvent();
     camX += (frog.x - 170 - camX) * 0.07;
@@ -4067,6 +4219,9 @@ function loop(ts) {
     } else {
       ctx.globalAlpha = 1; drawFrog();
     }
+    // Weather (rain in front of the frog) + lightning flash, then HUD on top
+    ctx.globalAlpha = 1; drawMonsoon();
+    if (lightningFlash > 0) lightningFlash *= 0.86;
     ctx.globalAlpha = 1; drawHUD();
 
   } else if (gs === 'menu') {
