@@ -387,9 +387,10 @@ const ACCESSORIES = [
   { id:'bowtie',     label:'Bow Tie',     cost:20  },
   { id:'sunhat',     label:'Sun Hat',     cost:75  },
   { id:'blush',      label:'Blush',       cost:30  },
-  { id:'roboticeye', label:'Robotic Eye', cost:120 },
   { id:'smalleyes',  label:'Deep Eyes',   cost:50  },
 ];
+// Accessories allowed while cyborg bundle is equipped
+const CYBORG_ALLOWED = new Set(['tophat','crown','bowtie','sunhat','smalleyes']);
 
 // ── Trails ────────────────────────────────────
 const TRAILS = [
@@ -477,13 +478,14 @@ let shopScrollBundles = 0;
 // ── Death ─────────────────────────────────────
 let deathType = null;
 let deathFrame = 0;
-let waterHitSX = 0;
+let waterHitWX = 0;
 let gameEndTime = 0;
 const RESTART_DELAY = 2500;
 const AUTO_MENU_DELAY = 12000;
 
 // ── Accessory equip helper ────────────────────
 function equipAccessory(id) {
+  if (equippedBundle === 'cyborg' && !CYBORG_ALLOWED.has(id)) return;
   if (equippedAccessory === id) { equippedAccessory = null; equippedAccessory2 = null; saveProgress(); return; }
   if (equippedAccessory2 === id) { equippedAccessory2 = null; saveProgress(); return; }
   const canStack = STACK_PAIRS.some(p => p[0] === equippedAccessory && p[1] === id);
@@ -901,11 +903,18 @@ const CYPRESS_TREES = Array.from({ length: 20 }, (_, i) => ({
 const GNARLED_TREES = Array.from({ length: 6 }, (_, i) => ({
   x: 30 + i * 88 + Math.random() * 50, h: 32 + Math.random() * 18
 }));
-const BG_LILY_PADS = Array.from({ length: 24 }, (_, i) => ({
-  x: Math.random() * W, y: HORIZON + 35 + Math.random() * 140,
-  r: 6 + Math.random() * 18, alpha: 0.18 + Math.random() * 0.28,
-  phase: Math.random() * Math.PI * 2, drift: 0.04 + Math.random() * 0.12
-}));
+function makeBgLilyPads() {
+  const result = [];
+  for (let att = 0; att < 600 && result.length < 24; att++) {
+    const r = 9 + Math.random() * 16;
+    const x = Math.random() * (W + 360);
+    const y = HORIZON + 44 + Math.random() * 95;
+    if (result.some(p => Math.abs(p.x - x) < p.r + r + 16 && Math.abs(p.y - y) < 20)) continue;
+    result.push({ x, y, r });
+  }
+  return result;
+}
+const BG_LILY_PADS = makeBgLilyPads();
 
 // ── Background draw ───────────────────────────
 
@@ -1274,26 +1283,25 @@ function drawBG() {
     for (let i = 0; i < BG_LILY_PADS.length; i++) {
       const bl = BG_LILY_PADS[i];
       // Slow parallax drift (closer to bg = slower)
-      bl.x -= bl.drift;
-      if (bl.x < -bl.r * 2) bl.x = W + bl.r * 2;
-      const bob = Math.sin(wv * 0.018 + bl.phase) * 1.5;
-      ctx.globalAlpha = bl.alpha;
+      const _range = W + bl.r * 3 + 360;
+      const bsx = ((bl.x + bgShift * 2.2) % _range + _range) % _range - bl.r * 1.5;
+      ctx.globalAlpha = 1;
       // Shadow/depth
-      ctx.fillStyle = 'rgba(0,0,0,0.18)';
-      ctx.beginPath(); ctx.ellipse(bl.x + 2, bl.y + bob + 4, bl.r * 0.92, bl.r * 0.28, 0, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = 'rgba(0,0,0,0.28)';
+      ctx.beginPath(); ctx.ellipse(bsx + 2, bl.y + 4, bl.r * 0.92, bl.r * 0.28, 0, 0, Math.PI*2); ctx.fill();
       // Pad
       ctx.fillStyle = bgPadCol;
-      ctx.beginPath(); ctx.ellipse(bl.x, bl.y + bob, bl.r, bl.r * 0.32, 0, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(bsx, bl.y, bl.r, bl.r * 0.32, 0, 0, Math.PI*2); ctx.fill();
       // Highlight top
       ctx.fillStyle = bgPadCol2;
-      ctx.beginPath(); ctx.ellipse(bl.x - bl.r*0.08, bl.y + bob - bl.r*0.04, bl.r * 0.72, bl.r * 0.18, -0.1, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(bsx - bl.r*0.08, bl.y - bl.r*0.04, bl.r * 0.72, bl.r * 0.18, -0.1, 0, Math.PI*2); ctx.fill();
       // Notch line
       ctx.strokeStyle = bgPadCol; ctx.lineWidth = 0.8;
-      ctx.beginPath(); ctx.moveTo(bl.x, bl.y + bob - bl.r*0.3); ctx.lineTo(bl.x, bl.y + bob + bl.r*0.3); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(bsx, bl.y - bl.r*0.3); ctx.lineTo(bsx, bl.y + bl.r*0.3); ctx.stroke();
       // Optional small flower for spring
       if (currentEvent === 'spring' && bl.r > 12) {
         ctx.fillStyle = 'rgba(255,200,220,0.7)';
-        ctx.beginPath(); ctx.arc(bl.x + bl.r*0.25, bl.y + bob - bl.r*0.12, bl.r*0.18, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(bsx + bl.r*0.25, bl.y - bl.r*0.12, bl.r*0.18, 0, Math.PI*2); ctx.fill();
       }
     }
     ctx.restore();
@@ -1515,7 +1523,7 @@ function makeFrog(x, y) {
     grounded:true, dead:false, alpha:1,
     charging:false, charge:0, balancing:false, balanceT:0,
     tonguePhase:'idle', tongueProg:0, tongueAngle:0, tongueLen:0, tongueTarget:null,
-    tongueCooldown:6,
+    tongueCooldown:6, frownTimer:0,
     blinking:false, blinkFrame:0, blinkTimer:0,
     onIce: false
   };
@@ -1554,11 +1562,8 @@ function drawFrog() {
   const f = frog;
   if (f.alpha <= 0) return;
   const sx = f.x - camX, sy = f.y;
-  const isInvincible = frame < invincibleUntil;
-
   ctx.save();
-  const _inv = frame < invincibleUntil;
-  ctx.globalAlpha = (_inv && (frame & 4)) ? 0.15 : f.alpha;
+  ctx.globalAlpha = f.alpha;
   ctx.translate(sx, sy);
   ctx.rotate(f.rot);
   ctx.scale(f.sqX, f.sqY);
@@ -1609,26 +1614,34 @@ function drawFrog() {
   ctx.beginPath(); ctx.ellipse(0, 4, 15, 13, 0, 0, Math.PI*2); ctx.fill();
 
   // Eyes on top of head
-  const useSmallEyes = equippedAccessory === 'smalleyes';
+  const useSmallEyes = equippedAccessory === 'smalleyes' || equippedAccessory2 === 'smalleyes';
   const blinkProg = f.blinking ? Math.sin(f.blinkFrame / 9 * Math.PI) : 0;
-  [[-10, -22], [10, -22]].forEach(([ex, ey]) => {
+  const _isRightRobotic = equippedAccessory === 'roboticeye' || _cyborg;
+  [[-10, -22, false], [10, -22, _isRightRobotic]].forEach(([ex, ey, skipOrg]) => {
     const eyeR = useSmallEyes ? 6 : 9;
     const pupR = useSmallEyes ? 4 : 6;
     const ey2  = useSmallEyes ? ey + 4 : ey;
+    // Outline ring in main body color (organic eyes only)
+    if (!skipOrg) {
+      ctx.strokeStyle = bodyCol; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(ex, ey2, eyeR + 1.5, 0, Math.PI*2); ctx.stroke();
+    }
     ctx.fillStyle = '#ffffff';
     ctx.beginPath(); ctx.arc(ex, ey2, eyeR, 0, Math.PI*2); ctx.fill();
-    if (blinkProg < 0.92) {
-      ctx.fillStyle = eyeCol;
-      ctx.beginPath(); ctx.arc(ex + 1, ey2 + 1, pupR, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath(); ctx.arc(ex - 2, ey2 - 2, useSmallEyes ? 1.2 : 2, 0, Math.PI*2); ctx.fill();
-    }
-    if (blinkProg > 0.05) {
-      ctx.save();
-      ctx.beginPath(); ctx.arc(ex, ey2, eyeR + 0.5, 0, Math.PI*2); ctx.clip();
-      ctx.fillStyle = bodyCol;
-      ctx.fillRect(ex - eyeR - 1, ey2 - eyeR - 1, (eyeR + 1) * 2, (eyeR + 1) * 2 * blinkProg);
-      ctx.restore();
+    if (!skipOrg) {
+      if (blinkProg < 0.92) {
+        ctx.fillStyle = eyeCol;
+        ctx.beginPath(); ctx.arc(ex + 1, ey2 + 1, pupR, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.arc(ex - 2, ey2 - 2, useSmallEyes ? 1.2 : 2, 0, Math.PI*2); ctx.fill();
+      }
+      if (blinkProg > 0.05) {
+        ctx.save();
+        ctx.beginPath(); ctx.arc(ex, ey2, eyeR + 0.5, 0, Math.PI*2); ctx.clip();
+        ctx.fillStyle = legCol; // darker eyelid
+        ctx.fillRect(ex - eyeR - 1, ey2 - eyeR - 1, (eyeR + 1) * 2, (eyeR + 1) * 2 * blinkProg);
+        ctx.restore();
+      }
     }
   });
 
@@ -1639,7 +1652,9 @@ function drawFrog() {
   } else {
     ctx.strokeStyle = olCol; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
     ctx.beginPath();
-    if (f.charging) {
+    if (f.frownTimer > 0) {
+      ctx.moveTo(-7, -8); ctx.quadraticCurveTo(0, -13, 7, -8);
+    } else if (f.charging) {
       ctx.moveTo(-6, -10); ctx.lineTo(6, -10);
     } else {
       ctx.moveTo(-7, -10); ctx.quadraticCurveTo(0, -6, 7, -10);
@@ -1711,6 +1726,10 @@ function drawFrog() {
     ctx.beginPath(); ctx.arc(10,cbEyeY,cbEyeR,0,Math.PI*2); ctx.stroke();
     ctx.fillStyle = _cbGlow;
     ctx.beginPath(); ctx.arc(10,cbEyeY,cbEyeR*0.39,0,Math.PI*2); ctx.fill();
+    // Redraw bowtie on top of cyborg metal so it isn't covered
+    if (equippedAccessory === 'bowtie' || equippedAccessory2 === 'bowtie') {
+      drawAccessory('bowtie');
+    }
   }
 
   ctx.restore();
@@ -1828,11 +1847,25 @@ function drawAccessory(accId) {
     ctx.fillStyle = '#4488ff'; ctx.beginPath(); ctx.arc(0,-44.5,2.5,0,Math.PI*2); ctx.fill();
     ctx.fillStyle = '#ff3030'; ctx.beginPath(); ctx.arc(8,-43,2.5,0,Math.PI*2); ctx.fill();
   } else if (accId === 'bowtie') {
-    ctx.fillStyle = '#cc2020';
-    ctx.beginPath(); ctx.moveTo(-1.5,-5); ctx.lineTo(-9,-8); ctx.lineTo(-9,-2); ctx.closePath(); ctx.fill();
-    ctx.beginPath(); ctx.moveTo( 1.5,-5); ctx.lineTo( 9,-8); ctx.lineTo( 9,-2); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#aa1818';
-    ctx.beginPath(); ctx.ellipse(0,-5,2.5,3,0,0,Math.PI*2); ctx.fill();
+    const by = -4;
+    // Left wing
+    ctx.fillStyle = '#c42020';
+    ctx.beginPath(); ctx.moveTo(-1.5,by-1); ctx.lineTo(-13,by-7); ctx.lineTo(-13,by+3); ctx.lineTo(-1.5,by+1); ctx.closePath(); ctx.fill();
+    // Right wing
+    ctx.beginPath(); ctx.moveTo(1.5,by-1); ctx.lineTo(13,by-7); ctx.lineTo(13,by+3); ctx.lineTo(1.5,by+1); ctx.closePath(); ctx.fill();
+    // Top highlight fold (lighter)
+    ctx.fillStyle = '#e83838';
+    ctx.beginPath(); ctx.moveTo(-1.5,by-0.5); ctx.lineTo(-11,by-6); ctx.lineTo(-9,by-2); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(1.5,by-0.5); ctx.lineTo(11,by-6); ctx.lineTo(9,by-2); ctx.closePath(); ctx.fill();
+    // Bottom shadow fold
+    ctx.fillStyle = '#981010';
+    ctx.beginPath(); ctx.moveTo(-1.5,by+0.5); ctx.lineTo(-12,by+2.5); ctx.lineTo(-10,by+0.5); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(1.5,by+0.5); ctx.lineTo(12,by+2.5); ctx.lineTo(10,by+0.5); ctx.closePath(); ctx.fill();
+    // Center knot
+    ctx.fillStyle = '#b01818';
+    ctx.beginPath(); ctx.ellipse(0,by,2.8,4,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#d42020';
+    ctx.beginPath(); ctx.ellipse(0,by,1.5,2.5,0,0,Math.PI*2); ctx.fill();
   } else if (accId === 'sunhat') {
     ctx.fillStyle = '#e8c840';
     ctx.beginPath(); ctx.ellipse(0,-32,18,4.5,0,0,Math.PI*2); ctx.fill();
@@ -2116,6 +2149,7 @@ function frogTick() {
     f.blinkFrame++;
     if (f.blinkFrame > 9) { f.blinking = false; f.blinkFrame = 0; }
   }
+  if (f.frownTimer > 0) f.frownTimer--;
 }
 
 function frogJump() {
@@ -2159,7 +2193,7 @@ function takeDamage(type) {
     if (type === 'water' || type === 'eaten') {
       const fallVy = frog.vy;
       frog.y = WATER_Y; frog.vx = 0; frog.vy = 0;
-      waterHitSX = frog.x - camX;
+      waterHitWX = frog.x;
       spark(frog.x, WATER_Y, 'splash');
       const _vy1 = fallVy; setTimeout(() => playSplash(_vy1), 0);
     } else if (type === 'sink') {
@@ -2173,6 +2207,7 @@ function takeDamage(type) {
     if (score > best) { best = score; isNewBest = true; saveProgress(); }
   } else {
     // Non-fatal — find respawn pad
+    if (frog) frog.frownTimer = 90;
     let respawnPad = curPad;
     while (respawnPad > 0 && pads[respawnPad].st >= 2) respawnPad--;
     invincibleUntil = frame + 120;
@@ -2181,7 +2216,7 @@ function takeDamage(type) {
 
     if (type === 'water' || type === 'eaten') {
       // Play splash, then animate frog sinking before respawn (~55 frames)
-      waterHitSX = frog.x - camX;
+      waterHitWX = frog.x;
       frog.y = WATER_Y; frog.vx = 0; frog.vy = 0;
       frog.grounded = true; frog.dead = false; frog.alpha = 1;
       frog.sqX = 1; frog.sqY = 1; frog.onIce = false;
@@ -2446,7 +2481,7 @@ function trySpawnGator() {
   // Find a visible pad pair with a gap of 220–480px and nothing else (e.g. a
   // branch pad) sitting in that gap, so the gator only ever appears in open
   // water strictly between two pads — never under or overlapping a pad.
-  for (let i = curPad + 1; i < Math.min(curPad + 14, pads.length - 1); i++) {
+  for (let i = curPad + 2; i < Math.min(curPad + 14, pads.length - 1); i++) {
     const pA = pads[i], pB = pads[i + 1];
     if (pA.st >= 2 || pB.st >= 2) continue;
     const left = pA.x <= pB.x ? pA : pB;
@@ -2490,7 +2525,7 @@ function tickGators() {
       if (!frog.grounded && !frog.dead && frame >= invincibleUntil) {
         if (frog.x >= g.zoneL && frog.x <= g.zoneR && frog.y <= WATER_Y - 2) {
           g.phase = 'lunging'; g.lungeT = 0;
-          waterHitSX = frog.x - camX;
+          waterHitWX = frog.x;
           takeDamage('eaten');
         }
       }
@@ -2517,95 +2552,118 @@ function drawGators() {
 
     ctx.save();
     ctx.globalAlpha = Math.min(1, emerge * 3);
-    const riseH = emerge * 38;
+    const riseH = emerge * 42;
     const mouthOpen = g.phase === 'lunging'
       ? Math.min(1, g.lungeT / 8)
-      : (0.28 + Math.sin(g.timer * 0.055) * 0.13);
-    const jawSep = mouthOpen * 28;
-    const headTop  = WATER_Y - riseH;
+      : (0.25 + Math.sin(g.timer * 0.055) * 0.12);
+    const jawSep = mouthOpen * 30;
+    const headTop     = WATER_Y - riseH;
     const upperJawBot = WATER_Y - jawSep * 0.52;
     const lowerJawTop = WATER_Y + jawSep * 0.48;
+    const HW = 42;
 
-    // Gator faces LEFT (snout on left side, toward approaching frog)
-    const HW = 36; // half-width of head
-
-    // ── Upper jaw ──────────────────────────────
-    ctx.fillStyle = '#2a6e18';
+    // ── Upper jaw — gradient ────────────────────
+    const gTop = ctx.createLinearGradient(sx - HW, headTop, sx - HW, WATER_Y);
+    gTop.addColorStop(0,   '#3a8c22');
+    gTop.addColorStop(0.5, '#2e7818');
+    gTop.addColorStop(1,   '#1a5010');
+    ctx.fillStyle = gTop;
     ctx.beginPath();
-    ctx.moveTo(sx + HW,      WATER_Y + 5);          // back-bottom
-    ctx.lineTo(sx + HW,      headTop + 10);          // back-top
-    ctx.quadraticCurveTo(sx, headTop, sx - HW - 6, upperJawBot); // snout top arc
-    ctx.lineTo(sx - HW - 6,  WATER_Y - 2);           // snout bottom
-    ctx.quadraticCurveTo(sx, WATER_Y + 3, sx + HW, WATER_Y + 5); // bottom arc
+    ctx.moveTo(sx + HW, WATER_Y + 5);
+    ctx.lineTo(sx + HW, headTop + 12);
+    ctx.quadraticCurveTo(sx + HW * 0.15, headTop, sx - HW * 0.3, headTop + 6);
+    ctx.bezierCurveTo(sx - HW * 0.75, headTop + 10, sx - HW - 10, upperJawBot - 3, sx - HW - 10, upperJawBot);
+    ctx.lineTo(sx - HW - 10, WATER_Y - 2);
+    ctx.quadraticCurveTo(sx, WATER_Y + 4, sx + HW, WATER_Y + 5);
     ctx.closePath(); ctx.fill();
-    // Highlight ridge
-    ctx.fillStyle = '#3a8a22';
-    ctx.beginPath(); ctx.ellipse(sx + 6, headTop + 9, 14, 5, 0, 0, Math.PI*2); ctx.fill();
-    // Scale bumps
-    ctx.fillStyle = '#1e5612';
+
+    // Dorsal ridge bumps
+    ctx.fillStyle = '#1e5a10';
+    for (let k = 0; k < 5; k++) {
+      const bx = sx + HW * 0.65 - k * 13;
+      const by = headTop + 7 + k * 2;
+      ctx.beginPath(); ctx.arc(bx, by, 3.5 - k * 0.3, Math.PI, 0); ctx.fill();
+    }
+    // Scale texture (arc rows)
+    ctx.strokeStyle = 'rgba(0,0,0,0.20)'; ctx.lineWidth = 1;
+    for (let k = 0; k < 5; k++) {
+      const bx = sx - HW + 6 + k * 13;
+      const by = headTop + 14 + k * 2;
+      ctx.beginPath(); ctx.arc(bx, by, 4, Math.PI, 0); ctx.stroke();
+    }
     for (let k = 0; k < 4; k++) {
-      const bx = sx - HW + 8 + k * 13;
-      ctx.beginPath(); ctx.arc(bx, headTop + 13, 3, Math.PI, 0); ctx.fill();
+      const bx = sx - HW + 13 + k * 13;
+      const by = headTop + 23 + k * 1.5;
+      ctx.beginPath(); ctx.arc(bx, by, 3, Math.PI, 0); ctx.stroke();
     }
 
     // ── Lower jaw ──────────────────────────────
-    ctx.fillStyle = '#1e5a10';
+    const gBot = ctx.createLinearGradient(sx - HW, lowerJawTop, sx - HW, WATER_Y + 10);
+    gBot.addColorStop(0, '#246014');
+    gBot.addColorStop(1, '#163808');
+    ctx.fillStyle = gBot;
     ctx.beginPath();
-    ctx.moveTo(sx + HW - 4, WATER_Y + 7);
-    ctx.lineTo(sx - HW - 2, lowerJawTop + 2);
-    ctx.lineTo(sx - HW - 2, WATER_Y + 5);
-    ctx.quadraticCurveTo(sx, WATER_Y + 10, sx + HW - 4, WATER_Y + 7);
+    ctx.moveTo(sx + HW - 4, WATER_Y + 8);
+    ctx.lineTo(sx - HW - 4, lowerJawTop + 2);
+    ctx.lineTo(sx - HW - 4, WATER_Y + 5);
+    ctx.quadraticCurveTo(sx, WATER_Y + 11, sx + HW - 4, WATER_Y + 8);
     ctx.closePath(); ctx.fill();
 
+    // Inner mouth glow when opening
+    if (mouthOpen > 0.25) {
+      const ma = Math.min(1, (mouthOpen - 0.25) / 0.55);
+      ctx.fillStyle = `rgba(190,75,75,${ma * 0.75})`;
+      ctx.beginPath();
+      ctx.moveTo(sx - HW, upperJawBot);
+      ctx.lineTo(sx - HW, lowerJawTop);
+      ctx.quadraticCurveTo(sx - HW * 0.4, lowerJawTop + jawSep * 0.15, sx + HW - 12, WATER_Y);
+      ctx.closePath(); ctx.fill();
+    }
+
     // ── Teeth ──────────────────────────────────
-    ctx.fillStyle = '#f0eedc';
-    // Upper teeth (pointing down)
+    ctx.fillStyle = '#efe8c8';
     for (let k = 0; k < 7; k++) {
-      const tx = sx - HW + 2 + k * 10;
-      ctx.beginPath();
-      ctx.moveTo(tx - 2.5, upperJawBot);
-      ctx.lineTo(tx,       upperJawBot + jawSep * 0.42);
-      ctx.lineTo(tx + 2.5, upperJawBot);
-      ctx.closePath(); ctx.fill();
+      const tx = sx - HW + 2 + k * 11;
+      ctx.beginPath(); ctx.moveTo(tx - 3, upperJawBot); ctx.lineTo(tx, upperJawBot + jawSep * 0.46); ctx.lineTo(tx + 3, upperJawBot); ctx.closePath(); ctx.fill();
     }
-    // Lower teeth (pointing up)
+    ctx.fillStyle = '#e8e0b8';
     for (let k = 0; k < 6; k++) {
-      const tx = sx - HW + 7 + k * 10;
-      ctx.beginPath();
-      ctx.moveTo(tx - 2,   lowerJawTop);
-      ctx.lineTo(tx,       lowerJawTop - jawSep * 0.38);
-      ctx.lineTo(tx + 2,   lowerJawTop);
-      ctx.closePath(); ctx.fill();
+      const tx = sx - HW + 7 + k * 11;
+      ctx.beginPath(); ctx.moveTo(tx - 2.5, lowerJawTop); ctx.lineTo(tx, lowerJawTop - jawSep * 0.4); ctx.lineTo(tx + 2.5, lowerJawTop); ctx.closePath(); ctx.fill();
     }
 
-    // ── Eye (on right / back of head) ──────────
-    const eyeX = sx + 14, eyeY = headTop + 9;
-    ctx.fillStyle = '#ffcc00';
-    ctx.beginPath(); ctx.arc(eyeX, eyeY, 8, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#1a1a00';
-    ctx.beginPath(); ctx.ellipse(eyeX, eyeY, 2.5, 6, 0.15, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,180,0.7)';
-    ctx.beginPath(); ctx.arc(eyeX - 2, eyeY - 3, 2, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#1a5010'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(eyeX, eyeY, 8, 0, Math.PI*2); ctx.stroke();
+    // ── Eye — golden with vertical slit pupil ──
+    const eyeX = sx + HW * 0.44;
+    const eyeY = headTop + 13;
+    ctx.fillStyle = '#285e14';
+    ctx.beginPath(); ctx.ellipse(eyeX, eyeY, 12, 9, -0.12, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#c8b858';
+    ctx.beginPath(); ctx.ellipse(eyeX, eyeY, 9, 6.5, -0.1, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#080808';
+    ctx.beginPath(); ctx.ellipse(eyeX, eyeY, 2.2, 5.5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.65)';
+    ctx.beginPath(); ctx.ellipse(eyeX - 2.5, eyeY - 2, 2.2, 1.3, -0.5, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#163808'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.ellipse(eyeX, eyeY, 9, 6.5, -0.1, 0, Math.PI*2); ctx.stroke();
 
-    // ── Nostril ────────────────────────────────
-    ctx.fillStyle = '#1a4a0e';
-    ctx.beginPath(); ctx.ellipse(sx - HW + 4, headTop + 8, 3.5, 2.5, -0.4, 0, Math.PI*2); ctx.fill();
+    // ── Nostrils ───────────────────────────────
+    ctx.fillStyle = '#122808';
+    ctx.beginPath(); ctx.ellipse(sx - HW - 4, headTop + 9, 2.8, 2, -0.35, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(sx - HW - 2, headTop + 14, 2.8, 2, -0.2, 0, Math.PI*2); ctx.fill();
 
     // ── Water ripple ───────────────────────────
     if (emerge < 1.2) {
       ctx.strokeStyle = `rgba(80,180,200,${0.35 * (1 - Math.min(1, emerge))})`;
       ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.ellipse(sx, WATER_Y, 58, 7, 0, 0, Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(sx, WATER_Y, 62, 8, 0, 0, Math.PI*2); ctx.stroke();
     }
     // Lunge warning glow
     if (g.phase === 'lunging' && g.lungeT < 30) {
-      const gw = ctx.createRadialGradient(sx, WATER_Y, 0, sx, WATER_Y, 72);
+      const gw = ctx.createRadialGradient(sx, WATER_Y, 0, sx, WATER_Y, 76);
       gw.addColorStop(0, `rgba(255,50,50,${0.3 * (1 - g.lungeT / 30)})`);
       gw.addColorStop(1, 'rgba(255,0,0,0)');
       ctx.save(); ctx.globalAlpha = 1; ctx.fillStyle = gw;
-      ctx.beginPath(); ctx.arc(sx, WATER_Y, 72, 0, Math.PI*2); ctx.fill(); ctx.restore();
+      ctx.beginPath(); ctx.arc(sx, WATER_Y, 76, 0, Math.PI*2); ctx.fill(); ctx.restore();
     }
     ctx.restore();
   });
@@ -2775,7 +2833,7 @@ function startGame() {
   gators = []; gatorSpawnCooldown = 0;
   genLevel(); genBgPads(); genBugs(); parts = []; frogTrail = [];
   jumpBoostEnd = 0; speedBoostEnd = 0; padBoostEnd = 0;
-  deathType = null; deathFrame = 0; waterHitSX = 0;
+  deathType = null; deathFrame = 0; waterHitWX = 0;
   frog = makeFrog(pads[0].x, pads[0].y - 23);
   camX = frog.x - 170;
   // Schedule first event 2-4 minutes in
@@ -3708,9 +3766,19 @@ function press(px = W/2, py = H/2) {
           if (bundle) {
             const owned = ownedBundles.includes(bid);
             if (equippedBundle === bid) { equippedBundle = null; }
-            else if (owned) { equippedBundle = bid; }
+            else if (owned) {
+              equippedBundle = bid;
+              if (bid === 'cyborg') {
+                if (equippedAccessory && !CYBORG_ALLOWED.has(equippedAccessory)) { equippedAccessory = null; equippedAccessory2 = null; }
+                if (equippedAccessory2 && !CYBORG_ALLOWED.has(equippedAccessory2)) equippedAccessory2 = null;
+              }
+            }
             else if (lilyPadsBalance >= bundle.cost) {
               lilyPadsBalance -= bundle.cost; ownedBundles.push(bid); equippedBundle = bid;
+              if (bid === 'cyborg') {
+                if (equippedAccessory && !CYBORG_ALLOWED.has(equippedAccessory)) { equippedAccessory = null; equippedAccessory2 = null; }
+                if (equippedAccessory2 && !CYBORG_ALLOWED.has(equippedAccessory2)) equippedAccessory2 = null;
+              }
             }
             shopPreviewId = null; shopPreviewType = null; saveProgress();
           }
@@ -4017,7 +4085,7 @@ function loop(ts) {
     ctx.globalAlpha = 1; drawGators();
     ctx.globalAlpha = 1; drawTrail();
     if (frog.sinking) {
-      ctx.globalAlpha = 1; drawWaterRipples(waterHitSX, WATER_Y);
+      ctx.globalAlpha = 1; drawWaterRipples(waterHitWX - camX, WATER_Y);
       ctx.save();
       ctx.beginPath(); ctx.rect(0, 0, W, WATER_Y + 6); ctx.clip();
       ctx.globalAlpha = 1; drawFrog();
@@ -4045,7 +4113,7 @@ function loop(ts) {
     if (frog && deathType !== 'win') {
       if (deathType === 'water' || deathType === 'eaten') {
         frog.y = Math.min(frog.y + 3.5, WATER_Y + 62);
-        ctx.globalAlpha = 1; drawWaterRipples(waterHitSX, WATER_Y);
+        ctx.globalAlpha = 1; drawWaterRipples(waterHitWX - camX, WATER_Y);
         ctx.save();
         ctx.beginPath(); ctx.rect(0, 0, W, WATER_Y + 6); ctx.clip();
         ctx.globalAlpha = 1; drawFrog(); ctx.restore();
