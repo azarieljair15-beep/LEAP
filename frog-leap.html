@@ -446,6 +446,19 @@ let lightningTimer = 0;// frames until next lightning strike (monsoon)
 let menuPage = 'main';
 let menuQuoteIdx = 0;
 let sfxOn = true, ambienceOn = true;
+let reducedFlashes = false; // dampen lightning flashes (photosensitivity)
+// UI accent colour — themeable from Settings
+const UI_COLORS = ['#3de83d','#40c8ff','#b070ff','#ff8030','#ff5fa0','#ffd23d'];
+let uiColor = '#3de83d';
+// Darken/brighten a #rrggbb hex by factor (0=black, 1=same, >1 brighter)
+function shade(hex, f) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.max(0, Math.min(255, ((n >> 16) & 255) * f)) | 0;
+  const g = Math.max(0, Math.min(255, ((n >> 8) & 255) * f)) | 0;
+  const b = Math.max(0, Math.min(255, (n & 255) * f)) | 0;
+  return 'rgb(' + r + ',' + g + ',' + b + ')';
+}
+let introDone = false; // whether the opening intro has been dismissed
 
 // ── Cosmetics / Currency ──────────────────────
 let equippedSkin = 'green';
@@ -506,7 +519,8 @@ function saveProgress() {
     localStorage.setItem('frogLeap_v3', JSON.stringify({
       best, lilyPadsTotal, lilyPadsBalance,
       equippedSkin, equippedAccessory, equippedAccessory2, equippedTrail,
-      equippedBundle, ownedAccessories, ownedTrails, ownedBundles, gamesWon, WIN
+      equippedBundle, ownedAccessories, ownedTrails, ownedBundles, gamesWon, WIN,
+      uiColor, reducedFlashes, sfxOn, ambienceOn
     }));
   } catch(e) {}
   scheduleCloudSync();
@@ -528,6 +542,10 @@ function loadProgress() {
     if (Array.isArray(d.ownedBundles)) ownedBundles = d.ownedBundles;
     if (d.gamesWon) gamesWon = d.gamesWon;
     if (d.WIN && d.WIN >= 30) WIN = d.WIN === null ? Infinity : d.WIN;
+    if (typeof d.uiColor === 'string' && UI_COLORS.includes(d.uiColor)) uiColor = d.uiColor;
+    if (typeof d.reducedFlashes === 'boolean') reducedFlashes = d.reducedFlashes;
+    if (typeof d.sfxOn === 'boolean') sfxOn = d.sfxOn;
+    if (typeof d.ambienceOn === 'boolean') ambienceOn = d.ambienceOn;
   } catch(e) {}
 }
 loadProgress();
@@ -2519,7 +2537,7 @@ function tickEvent() {
     lightningTimer--;
     if (lightningTimer <= 0) {
       // Lightning strike: flash the sky, startle the frog, crack of thunder
-      lightningFlash = 1;
+      lightningFlash = reducedFlashes ? 0.28 : 1;
       if (frog && !frog.dead) frog.scaredTimer = 70;
       thunderClap();
       lightningTimer = 220 + Math.floor(Math.random() * 380);
@@ -2984,7 +3002,7 @@ function drawHUD() {
   // Lily pad balance (top right)
   ctx.fillStyle = 'rgba(0,0,0,0.45)';
   ctx.beginPath(); ctx.roundRect(W-122, 12, 110, 34, 8); ctx.fill();
-  ctx.fillStyle = '#80ff80'; ctx.font = 'bold 13px Arial';
+  ctx.fillStyle = shade(uiColor, 1.05); ctx.font = 'bold 13px Arial';
   ctx.textAlign = 'right'; ctx.fillText('🍃 ' + lilyPadsBalance + ' lily pads', W-12, 34); ctx.textAlign = 'left';
 
   // Time icon
@@ -3130,6 +3148,33 @@ const MENU_QUOTES = [
   'Another beautiful leap.','Sweet spot or nothing.','Do it for the pads.',
   'The moon cheers you on.','Pure frog instinct.','Higher ground awaits.',
   'This is your swamp now.','Run it back.','The legend grows.',
+  'Hop like nobody is watching.','The reeds whisper your name.','One leap closer.',
+  'Born in the bog, bred to jump.','Channel your inner tadpole.','The current respects courage.',
+  'Pads fear no frog who commits.','Glory smells like swamp gas.','Leap today, brag tomorrow.',
+  'The lake keeps no grudges.','Every champion was once a tadpole.','Trust your hind legs.',
+  'Mud on your toes, fire in your heart.','The dragonflies salute you.','Aim small, leap big.',
+  'A still pond hides a bold frog.','Fortune favors the springy.','Jump now, ribbit later.',
+  'The horizon is just more pads.','Slippery when brave.','Find your rhythm in the reeds.',
+  'Even herons admire a clean arc.','Greatness is one gap away.','Leap and the pad appears.',
+  'The swamp rewards the patient.','Power lives in the pause.','Calm mind, springy legs.',
+  'Cattails bow to a true leaper.','The fog clears for the focused.','Hop with intention.',
+  'No pad is too far for a dreamer.','Let the wind do half the work.','Steady toes, steady soul.',
+  'The marsh remembers legends.','Bend the knees, free the frog.','You versus the gap.',
+  'Lily pads are stepping stones to glory.','Fear the water, respect the leap.','Make the herons jealous.',
+  'A frog in motion stays alive.','The night is young, the pads are many.','Leap clean, land proud.',
+  'Trust the green beneath your feet.','The swamp sings for survivors.','Charge with conviction.',
+  'Every gap is an invitation.','Stay loose, stay leaping.','The bog believes in you.',
+  'Ripples remember every jump.','Find the sweet spot, find peace.','Hop, skip, conquer.',
+  'The moon lights the way forward.','Be the frog they tell stories about.','Spring eternal.',
+  'Doubt sinks. Courage leaps.','The water is just motivation.','Onward, amphibian.',
+  'Read the gap, feel the leap.','Legends are made between pads.','Wet feet build character.',
+  'The reeds part for the determined.','Your next pad is your best pad.','Leap loud, land light.',
+  'Frogs were made for this.','The swamp has no ceiling.','Commit and the gap shrinks.',
+  'Hesitation is the only predator.','Bog royalty leaps without fear.','One green throne at a time.',
+  'The lake auditions only the bold.','Springs in your legs, stars in your eyes.','Go where the pads are.',
+  'A brave hop beats a safe stay.','The current cannot catch the committed.','Leap like it is the last pad.',
+  'Every ripple is applause.','The swamp keeps score, so jump well.','Make peace with the gap.',
+  'Tonight the frogs fly.','Hold the charge, free the leap.','The mud is just a launchpad.',
 ];
 
 // ── Shop draw ─────────────────────────────────
@@ -3388,6 +3433,70 @@ function drawFrogsPage() {
 }
 
 // ── Main menu ─────────────────────────────────
+// ── Opening intro: two frogs chilling on a big lily pad ──
+function drawIntro() {
+  // Dusk swamp backdrop
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#15233a'); g.addColorStop(0.45, '#27415c');
+  g.addColorStop(0.62, '#2c5a50'); g.addColorStop(1, '#143626');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  // Stars
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  for (let i = 0; i < 46; i++) {
+    const x = (i * 97 + 30) % W, y = (i * 53) % 200;
+    const tw = 0.4 + 0.6 * (0.5 + Math.sin(frame * 0.05 + i) * 0.5);
+    ctx.globalAlpha = tw; ctx.fillRect(x, y, 1.6, 1.6);
+  }
+  ctx.globalAlpha = 1;
+  // Moon
+  ctx.fillStyle = 'rgba(232,242,214,0.92)';
+  ctx.beginPath(); ctx.arc(W - 86, 86, 30, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = 'rgba(232,242,214,0.16)';
+  ctx.beginPath(); ctx.arc(W - 86, 86, 44, 0, Math.PI*2); ctx.fill();
+  // Distant reeds silhouette
+  const wy = H * 0.6;
+  ctx.strokeStyle = 'rgba(8,24,16,0.8)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  for (let i = 0; i < 9; i++) {
+    const rx = 20 + i * 56, sway = Math.sin(frame * 0.02 + i) * 4;
+    ctx.beginPath(); ctx.moveTo(rx, wy + 6);
+    ctx.quadraticCurveTo(rx + sway, wy - 30, rx + sway * 1.6, wy - 52); ctx.stroke();
+  }
+  // Water
+  const wg = ctx.createLinearGradient(0, wy, 0, H);
+  wg.addColorStop(0, '#214c45'); wg.addColorStop(1, '#0f261f');
+  ctx.fillStyle = wg; ctx.fillRect(0, wy, W, H - wy);
+  // Moon reflection shimmer
+  for (let r = 0; r < 70; r += 11) {
+    const ww = Math.max(0, 6 + Math.sin(r * 0.2 + frame * 0.05) * 9);
+    ctx.fillStyle = `rgba(232,242,214,${0.12 - r * 0.0012})`;
+    ctx.beginPath(); ctx.ellipse(W - 86, wy + 14 + r, ww, 1.4, 0, 0, Math.PI*2); ctx.fill();
+  }
+  // Big lily pad
+  const lpX = W/2, lpY = wy + 46;
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.beginPath(); ctx.ellipse(lpX + 6, lpY + 12, 158, 42, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#2f7a34';
+  ctx.beginPath(); ctx.ellipse(lpX, lpY, 158, 46, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#3f9a44';
+  ctx.beginPath(); ctx.ellipse(lpX - 12, lpY - 7, 126, 28, -0.05, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#246026'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(lpX + 92, lpY - 22); ctx.lineTo(lpX + 156, lpY - 46); ctx.stroke();
+  // Two frogs chilling together
+  const bob = Math.sin(frame * 0.05) * 2, bob2 = Math.sin(frame * 0.05 + 1) * 2;
+  drawFrogPreview(lpX - 54, lpY - 20 + bob, 1.55, 'green', null, null);
+  drawFrogPreview(lpX + 54, lpY - 20 + bob2, 1.55, 'blue', null, null);
+  // LEAP logo — top corner
+  ctx.textAlign = 'left';
+  ctx.fillStyle = uiColor; ctx.font = 'bold 48px Arial'; ctx.fillText('LEAP', 24, 60);
+  ctx.fillStyle = shade(uiColor, 0.82); ctx.font = 'italic 13px Arial'; ctx.fillText("a frog's tale", 27, 80);
+  // Prompt
+  ctx.textAlign = 'center';
+  const pa = 0.45 + Math.sin(frame * 0.08) * 0.4;
+  ctx.fillStyle = `rgba(255,255,255,${pa})`; ctx.font = 'bold 16px Arial';
+  ctx.fillText('Tap to begin', W/2, H - 38);
+  ctx.textAlign = 'left';
+}
+
 function drawMenu() {
   ctx.fillStyle = 'rgba(0,7,20,0.78)'; ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';
@@ -3405,22 +3514,22 @@ function drawMenu() {
 
     const bobY = Math.sin(frame * 0.04) * 4;
     drawFrogPreview(W/2, 122 + bobY, 2.4, equippedSkin, equippedAccessory);
-    ctx.fillStyle = '#3de83d'; ctx.font = 'bold 80px Arial'; ctx.fillText('LEAP', W/2, 215);
+    ctx.fillStyle = uiColor; ctx.font = 'bold 80px Arial'; ctx.fillText('LEAP', W/2, 215);
     const qIdx = Math.floor(frame / 300) % MENU_QUOTES.length;
-    ctx.fillStyle = '#6ab86a'; ctx.font = '14px Arial';
+    ctx.fillStyle = shade(uiColor, 0.78); ctx.font = '14px Arial';
     ctx.fillText(MENU_QUOTES[qIdx], W/2, 240);
-    ctx.fillStyle = '#2a7a2a';
+    ctx.fillStyle = shade(uiColor, 0.52);
     ctx.beginPath(); ctx.roundRect(W/2-90, 262, 180, 48, 24); ctx.fill();
     ctx.fillStyle = '#fff'; ctx.font = 'bold 24px Arial'; ctx.fillText('PLAY', W/2, 294);
-    ctx.fillStyle = '#1a3a1a';
+    ctx.fillStyle = shade(uiColor, 0.28);
     ctx.beginPath(); ctx.roundRect(W/2-82, 320, 164, 40, 20); ctx.fill();
-    ctx.fillStyle = '#7ae87a'; ctx.font = 'bold 15px Arial'; ctx.fillText('YOUR FROGS', W/2, 346);
-    ctx.fillStyle = '#1a3a1a';
+    ctx.fillStyle = shade(uiColor, 1.05); ctx.font = 'bold 15px Arial'; ctx.fillText('YOUR FROGS', W/2, 346);
+    ctx.fillStyle = shade(uiColor, 0.28);
     ctx.beginPath(); ctx.roundRect(W/2-82, 370, 164, 40, 20); ctx.fill();
-    ctx.fillStyle = '#7ae87a'; ctx.font = 'bold 15px Arial'; ctx.fillText('SHOP', W/2, 396);
-    ctx.fillStyle = '#132013';
+    ctx.fillStyle = shade(uiColor, 1.05); ctx.font = 'bold 15px Arial'; ctx.fillText('SHOP', W/2, 396);
+    ctx.fillStyle = shade(uiColor, 0.22);
     ctx.beginPath(); ctx.roundRect(W/2-78, 420, 156, 38, 19); ctx.fill();
-    ctx.fillStyle = '#5ac85a'; ctx.font = 'bold 14px Arial'; ctx.fillText('SETTINGS', W/2, 445);
+    ctx.fillStyle = shade(uiColor, 0.85); ctx.font = 'bold 14px Arial'; ctx.fillText('SETTINGS', W/2, 445);
     if (best > 0) { ctx.fillStyle = '#ffd700'; ctx.font = '14px Arial'; ctx.fillText('Best: ' + best, W/2, 484); }
     ctx.fillStyle = 'rgba(255,255,255,0.28)'; ctx.font = '12px Arial'; ctx.fillText('Space · Click · Tap', W/2, H - 18);
 
@@ -3432,36 +3541,57 @@ function drawMenu() {
 
   } else {
     // Settings
-    ctx.fillStyle = 'rgba(0,10,0,0.78)'; ctx.fillRect(0,0,W,H);
-    ctx.fillStyle = '#3de83d'; ctx.font = 'bold 30px Arial'; ctx.fillText('SETTINGS', W/2, 98);
+    ctx.fillStyle = 'rgba(0,10,0,0.82)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = uiColor; ctx.font = 'bold 30px Arial'; ctx.fillText('SETTINGS', W/2, 64);
     ctx.strokeStyle = 'rgba(80,160,80,0.22)'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(40, 118); ctx.lineTo(W - 40, 118); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(40, 82); ctx.lineTo(W - 40, 82); ctx.stroke();
     ctx.textAlign = 'left';
-    ctx.fillStyle = '#cccccc'; ctx.font = '17px Arial'; ctx.fillText('Sound Effects', 52, 205);
-    ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText('Jumps, landing, splashes', 52, 228);
-    drawToggle(W - 100, 192, sfxOn);
-    ctx.fillStyle = '#cccccc'; ctx.font = '17px Arial'; ctx.fillText('Ambience', 52, 285);
-    ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText('Wind, crickets, birds', 52, 308);
-    drawToggle(W - 100, 272, ambienceOn);
-    ctx.fillStyle = '#183018';
-    ctx.beginPath(); ctx.roundRect(W/2-70, 438, 140, 44, 22); ctx.fill();
-    ctx.fillStyle = '#7ac87a'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('BACK', W/2, 466);
+    // Sound Effects
+    ctx.fillStyle = '#cccccc'; ctx.font = '17px Arial'; ctx.fillText('Sound Effects', 52, 124);
+    ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText('Jumps, landing, splashes', 52, 144);
+    drawToggle(W - 100, 112, sfxOn);
+    // Ambience
+    ctx.fillStyle = '#cccccc'; ctx.font = '17px Arial'; ctx.fillText('Ambience', 52, 184);
+    ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText('Wind, crickets, rain, birds', 52, 204);
+    drawToggle(W - 100, 172, ambienceOn);
+    // Reduced Flashes
+    ctx.fillStyle = '#cccccc'; ctx.font = '17px Arial'; ctx.fillText('Reduced Flashes', 52, 244);
+    ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText('Dim the monsoon lightning', 52, 264);
+    drawToggle(W - 100, 232, reducedFlashes);
+    // UI Main Colour
+    ctx.fillStyle = '#cccccc'; ctx.font = '17px Arial'; ctx.fillText('UI Main Color', 52, 304);
+    ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText('Logo, buttons & HUD accent', 52, 324);
+    const swY = 338, swW = 30, swGap = 8, swN = UI_COLORS.length;
+    const swX0 = W/2 - (swN * swW + (swN - 1) * swGap) / 2;
+    for (let i = 0; i < swN; i++) {
+      const x = swX0 + i * (swW + swGap);
+      ctx.fillStyle = UI_COLORS[i];
+      ctx.beginPath(); ctx.roundRect(x, swY, swW, swW, 7); ctx.fill();
+      if (UI_COLORS[i] === uiColor) {
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.roundRect(x - 2, swY - 2, swW + 4, swW + 4, 9); ctx.stroke();
+      }
+    }
+    // BACK
+    ctx.fillStyle = shade(uiColor, 0.3);
+    ctx.beginPath(); ctx.roundRect(W/2-70, 398, 140, 44, 22); ctx.fill();
+    ctx.fillStyle = shade(uiColor, 1.0); ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('BACK', W/2, 426);
     // Account row
     if (currentUser) {
       ctx.fillStyle = '#3a7a3a'; ctx.font = '12px Arial';
-      ctx.fillText('@' + currentUser.username, W/2, 495);
+      ctx.fillText('@' + currentUser.username, W/2, 470);
       ctx.fillStyle = '#2a0a0a';
-      ctx.beginPath(); ctx.roundRect(W/2-60, 502, 120, 34, 17); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(W/2-60, 480, 120, 34, 17); ctx.fill();
       ctx.fillStyle = '#cc5555'; ctx.font = 'bold 13px Arial';
-      ctx.fillText('LOG OUT', W/2, 524);
+      ctx.fillText('LOG OUT', W/2, 502);
     } else {
       ctx.fillStyle = '#556655'; ctx.font = '12px Arial';
-      ctx.fillText('Playing as guest', W/2, 495);
+      ctx.fillText('Playing as guest', W/2, 470);
       ctx.fillStyle = '#0a1a0a';
-      ctx.beginPath(); ctx.roundRect(W/2-60, 502, 120, 34, 17); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(W/2-60, 480, 120, 34, 17); ctx.fill();
       ctx.fillStyle = '#5ac85a'; ctx.font = 'bold 13px Arial';
-      ctx.fillText('SIGN IN', W/2, 524);
+      ctx.fillText('SIGN IN', W/2, 502);
     }
     ctx.textAlign = 'left';
   }
@@ -3510,6 +3640,31 @@ const SPLASH_PHRASES = [
   'Lily pads: 0. Lake: 1.','Try left.','Try right.','Try not landing in water.',
   'Perfect form, imperfect target.','The splash was legendary.',
   'Into the abyss.','Gravity sends its regards.',
+  'The pond filed that under "miss."','You found the one wet spot. All of it.','Cannonball unlocked.',
+  'The frog became a submarine.','Big splash energy.','The lake said gotcha.',
+  'Aimed for green, found blue.','That arc belonged to a fish.','Belly flop of the century.',
+  'The water had other plans.','Buoyancy: zero. Style: ten.','You out-swam the pad.',
+  'A graceful dive into nothing.','The reeds watched in horror.','Splashdown confirmed, mission failed.',
+  'The pad ducked at the last second.','Hydrated, but humbled.','The current thanks you.',
+  'You leapt; the lake leapt higher.','Wrong shade of green.','The ripples are forming a tribute.',
+  'A frog overboard.','That gap was a trap.','The water keeps the highlight reel.',
+  'Two inches short of legend.','The splash echoed for miles.','You discovered new depths.',
+  'The minnows are applauding.','A bold leap into the deep.','Soaked and unbothered? No, just soaked.',
+  'The lily pad waved goodbye.','Form: pristine. Outcome: damp.','The pond collects what it earns.',
+  'You met the water personally.','Gravity remained undefeated.','The arc betrayed you.',
+  'Splash percent: one hundred.','Found everything but the pad.','The lake is undefeated tonight.',
+  'A swan dive from a frog.','That one is going in the bloopers.','The bog claims another arc.',
+  'You aimed true to the water.','The pad was a mirage.','Down you go, brave one.',
+  'The fish made room.','A leap remembered by the lake.','Surface tension: broken.',
+  'The pond keeps the receipt.','You kissed the water at speed.','Whoosh, then sploosh.',
+  'A masterclass in missing.','The reeds will tell this story.','You leapt into the reflection.',
+  'The water always wins ties.','One pad too many.','Style points drowned with you.',
+  'The lake sends its compliments.','A dramatic exit, stage down.','You free-dived without a plan.',
+  'The gap was wider than your hope.','Splash: majestic. Survival: nope.','The pond is well-fed tonight.',
+  'You found the wettest path.','The current called dibs.','A leap of faith, met by water.',
+  'The lily pad was sold separately.','You picked the scenic route down.','The swamp drinks deeply.',
+  'A perfect launch, a soggy finish.','The water rolled out the welcome.','That gap ate your momentum.',
+  'You auditioned for the fish.','The ripples are still clapping.','Down among the lily roots.',
 ];
 
 const SUNKEN_PHRASES = [
@@ -3557,6 +3712,31 @@ const SUNKEN_PHRASES = [
   'Tick. Tock. Splash.','You felt comfortable. The pad did not.',
   'Sometimes the clock wins.','The ring went orange. Still waiting?',
   'Lily pads are temporary. Lessons are not.',
+  'You overstayed your welcome.','The pad got tired of holding you.','Down with the ship, er, leaf.',
+  'Hesitation has a sinking feeling.','The lily pad clocked out.','Too cozy, too costly.',
+  'You waited; the swamp did not.','The pad surrendered to the deep.','Comfort is a slow leak.',
+  'The leaf folded under pressure.','You took root and then took water.','The countdown reached zero.',
+  'A sinking realization, literally.','The pad whispered "go" three times.','Patience drowned this round.',
+  'You and the pad went under together.','The marsh reclaimed its real estate.','Standing still is a strategy. A bad one.',
+  'The lily pad punched its last ticket.','You lingered into the lake.','The green gave way to blue.',
+  'Roots pulled you home.','The pad could not tread water forever.','Slow feet, wet seat.',
+  'The swamp evicted you.','You missed the warning glow.','Gravity collected the rent.',
+  'The pad melted into memory.','Sink first, regret later.','The countdown was not decorative.',
+  'You held the pose a beat too long.','The lake swallowed your perch.','A quiet, soggy descent.',
+  'The pad waved the white flag.','You sank with great composure.','The marsh keeps the patient ones.',
+  'Down through the lily roots.','The pad ran out of float.','Comfort zone: now underwater.',
+  'You trusted the leaf too long.','The swamp does not do overtime.','A graceful sink is still a sink.',
+  'The pad gave its last buoyant breath.','You were one jump too relaxed.','The bog tucked you in.',
+  'The lily pad signed off.','Stillness has a price, paid in water.','The pad folded its hand.',
+  'You became part of the scenery.','The ring screamed; you snoozed.','Down to the muddy archives.',
+  'The pad could not carry the dream.','You sank into the highlight reel.','The lake adopted you.',
+  'A leisurely descent into defeat.','The marsh said "time."','You out-waited your luck.',
+  'The pad dissolved beneath the dream.','Sinking: the slow goodbye.','The swamp set its own clock.',
+  'You rested. The pad quit.','Under you go, calm and damp.','The lily pad clocked its final shift.',
+  'You found the bottom, eventually.','The pad let go first.','A soggy lesson in timing.',
+  'The green throne sank into legend.','You waited for a sign and got water.','The bog is patient too.',
+  'Down, down, into the reeds.','The pad bid a bubbly farewell.','Stillness, then submersion.',
+  'The lake collects loiterers.','You sank with style points intact.','The pad chose the deep.',
 ];
 
 const BURNED_PHRASES = [
@@ -3700,6 +3880,31 @@ const EATEN_PHRASES = [
   'Midpoint achieved: the mouth.','Technically impressive.',
   'He lunged at the exact right moment.','Reflex gap: wide.',
   'Timing was off. His was on.',
+  'The swamp has teeth, it turns out.','One snap and the run was over.','He waited all day for that.',
+  'You leapt straight into lunch.','The water rippled, then roared.','A jaw appeared. Then nothing.',
+  'The ambush was flawless.','He was not a log after all.','Gulp. The end.',
+  'The reeds hid a hungry surprise.','You made a fine snack.','Never trust still water.',
+  'The lurker collected his prize.','A toothy farewell.','He blended in until he didn\'t.',
+  'The swamp predator says thanks.','You were the special of the day.','Snapped from the shadows.',
+  'The gap had a guardian.','He timed it to perfection.','Down the hatch, brave frog.',
+  'The water exploded with teeth.','A patient hunter, a hasty frog.','You leapt into the jaws of fate.',
+  'The ripple was a warning. Too late.','He rose, he snapped, he won.','The reeds kept his secret.',
+  'A clean catch by the lurker.','You crossed the wrong open water.','The swamp claimed a meal.',
+  'He smiled with too many teeth.','The ambush paid off.','Your arc ended in his jaws.',
+  'The hunter blinked first. You blinked last.','A green snack, gone in a snap.','The deep had a doorman.',
+  'He was faster than your faith.','The water grinned and closed.','You fed the legend of the bog.',
+  'A predator\'s perfect timing.','The gap was a dinner table.','Snatched mid-leap.',
+  'He lurked, you leapt, he ate.','The swamp keeps its hunters fed.','A toothy plot twist.',
+  'You met the local apex.','The jaws of the marsh prevailed.','He waited; you obliged.',
+  'The lunge connected.','A hungry shadow, a brave frog.','Caught between pad and predator.',
+  'The water held a hidden grin.','You were the catch of the night.','He surfaced for seconds.',
+  'The reeds applauded the hunter.','A snap heard across the bog.','You leapt; he feasted.',
+  'The ambush was years in the making.','One bold leap, one big gulp.','The swamp evens the score.',
+  'He took the scenic route to your arc.','The deep was never empty.','A predator\'s patience rewarded.',
+  'You danced into the danger zone.','The jaws closed on a dream.','He was the gap\'s landlord.',
+  'A toothy end to a brave run.','The marsh hunter says cheers.','You crossed; he intercepted.',
+  'The lurker earned his supper.','Snapped at the apex of glory.','The water wore a disguise.',
+  'He rose like a green nightmare.','Your leap fed the legend.','The bog\'s jaws never miss twice.',
 ];
 
 const WIN_PHRASES = [
@@ -3749,6 +3954,29 @@ const WIN_PHRASES = [
   'You moved like water should.','Pure instinct.',
   'The sky watched you fly.','30 and beyond.',
   'The lily pads will remember.','Frog: victorious.',
+  'The whole swamp is chanting your name.','You leapt into legend.','Crowned king of the lily pads.',
+  'Every pad bowed as you passed.','The herons retire in shame.','A flawless crossing.',
+  'The marsh has never seen such grace.','You out-leapt the impossible.','History, written in ripples.',
+  'The gators went hungry tonight.','The water never touched you.','Untouchable. Unstoppable. Unreal.',
+  'You turned a swamp into a runway.','The reeds form an honor guard.','Legend status: achieved.',
+  'The moon dimmed beside your glow.','You made it look easy.','The bog crowns a new hero.',
+  'Pad after pad, perfection.','You leapt where others sank.','The swamp salutes its champion.',
+  'Greatness, one clean arc at a time.','The current never had a chance.','You wrote your name in the marsh.',
+  'A masterpiece of momentum.','The lily pads will tell tales.','Every gap surrendered to you.',
+  'You danced across the danger.','The fish only watched.','A crossing for the ages.',
+  'The swamp found its legend.','You soared past every doubt.','Victory smells like fresh reeds.',
+  'The hunters bow to the hunted.','You owned the open water.','Pure, unfiltered frog brilliance.',
+  'The night belongs to you.','A perfect run, perfectly earned.','The marsh writes you into myth.',
+  'You leapt beyond the horizon.','Champions are made between pads.','The whole bog is on its feet.',
+  'You made gravity look optional.','The lily pads kneel.','Flawless from first hop to last.',
+  'The swamp will never forget tonight.','You turned fear into flight.','A legend leaps eternal.',
+  'The reeds whisper your victory.','You conquered every gap.','Glory, green and gleaming.',
+  'The water bows to your arc.','A crossing worthy of song.','You are the swamp\'s finest.',
+  'Every ripple cheers your name.','You leapt clean through the night.','The bog has a new champion.',
+  'Triumph tastes like swamp air.','You out-jumped the legends.','A perfect dance over water.',
+  'The marsh kneels to its king.','You made the impossible routine.','History leaps with you tonight.',
+  'The lake never laid a finger on you.','You crossed like a comet.','Victory, earned pad by pad.',
+  'The swamp roars for its hero.','You leapt past every limit.','A flawless, fearless frog.',
 ];
 
 let deathPhraseIdx = 0;
@@ -3840,6 +4068,8 @@ function canvasXY(e) {
 
 function press(px = W/2, py = H/2) {
   resumeAC(); startAmbience();
+
+  if (gs === 'intro') { introDone = true; gs = 'menu'; menuPage = 'main'; return; }
 
   if (gs === 'menu') {
     if (menuPage === 'main') {
@@ -3976,15 +4206,24 @@ function press(px = W/2, py = H/2) {
       return;
 
     } else {
-      if (inRect(px, py, 0, 180, W, 60)) { sfxOn = !sfxOn; return; }
-      if (inRect(px, py, 0, 255, W, 60)) {
+      if (inRect(px, py, 0, 102, W, 56)) { sfxOn = !sfxOn; saveProgress(); return; }
+      if (inRect(px, py, 0, 162, W, 56)) {
         ambienceOn = !ambienceOn;
         if (AmbiAC) { if (ambienceOn) AmbiAC.resume(); else AmbiAC.suspend(); }
         if (!ambienceOn) stopEventAmbience();
+        saveProgress();
         return;
       }
-      if (inRect(px, py, W/2-70, 438, 140, 44)) { menuPage = 'main'; return; }
-      if (inRect(px, py, W/2-60, 502, 120, 34)) {
+      if (inRect(px, py, 0, 222, W, 56)) { reducedFlashes = !reducedFlashes; saveProgress(); return; }
+      // UI colour swatches
+      const swY = 338, swW = 30, swGap = 8, swN = UI_COLORS.length;
+      const swX0 = W/2 - (swN * swW + (swN - 1) * swGap) / 2;
+      for (let i = 0; i < swN; i++) {
+        const x = swX0 + i * (swW + swGap);
+        if (inRect(px, py, x - 2, swY - 2, swW + 6, swW + 6)) { uiColor = UI_COLORS[i]; saveProgress(); return; }
+      }
+      if (inRect(px, py, W/2-70, 398, 140, 44)) { menuPage = 'main'; return; }
+      if (inRect(px, py, W/2-60, 480, 120, 34)) {
         if (currentUser) { doLogout(); } else { showAuthOverlay(); }
         return;
       }
@@ -4224,6 +4463,8 @@ function loop(ts) {
     if (lightningFlash > 0) lightningFlash *= 0.86;
     ctx.globalAlpha = 1; drawHUD();
 
+  } else if (gs === 'intro') {
+    drawIntro();
   } else if (gs === 'menu') {
     drawMenu();
   } else {
@@ -4250,7 +4491,7 @@ function loop(ts) {
   }
 }
 
-gs = 'menu';
+gs = 'intro';
 loop();
 
 </script>
