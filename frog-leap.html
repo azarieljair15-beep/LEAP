@@ -13,9 +13,12 @@ html, body {
 body { display:flex; justify-content:center; align-items:center; }
 canvas {
   display:block;
-  height: 100vh;
-  width: auto;
+  max-height: 100svh;
   max-width: 100vw;
+  width: auto;
+  height: auto;
+  /* Always maintain 480x640 aspect ratio */
+  aspect-ratio: 480 / 640;
 }
 /* ── Auth overlay ──────────────────────────── */
 #auth-overlay {
@@ -256,6 +259,12 @@ async function authSubmit() {
       const rows = await sbPost('/rest/v1/profiles', { username: user, password_hash: hash });
       const profile = rows[0];
       currentUser = { id: profile.id, username: profile.username };
+      // New account — wipe any local progress so they start fresh
+      best = 0; lilyPadsTotal = 0; lilyPadsBalance = 0; gamesWon = 0; WIN = 30;
+      equippedSkin = 'green'; equippedAccessory = null; equippedAccessory2 = null;
+      equippedTrail = null; equippedBundle = null;
+      ownedAccessories = []; ownedTrails = []; ownedBundles = [];
+      localStorage.removeItem('frogLeap_v3'); localStorage.removeItem('frogLeap_v2');
     } else {
       // Login
       const rows = await sbGet(`/rest/v1/profiles?username=eq.${encodeURIComponent(user)}&select=*`);
@@ -423,6 +432,7 @@ let lastDamageType = null;
 let frogOnIce = false;
 let secondChanceUsed = false; // only one second-chance buy per game
 let gamesWon = 0;       // total wins, drives WIN goal escalation
+let heartRegenTimer = 0; // seconds accumulated toward next heart regen
 let spawnGraceUntil = 0; // ms timestamp — damage ignored during grace
 let frozenDamageTimer = 0;
 
@@ -580,6 +590,7 @@ function skinOwned(id) {
 
 // ── Audio ─────────────────────────────────────
 let AC = null, AmbiAC = null, ambiStarted = false;
+let menuMusicAC = null, menuMusicPlaying = false;
 function getAC() {
   if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)();
   return AC;
@@ -587,6 +598,45 @@ function getAC() {
 function resumeAC() {
   try { if (AC && AC.state === 'suspended') AC.resume(); } catch(e) {}
   try { if (ambienceOn && AmbiAC && AmbiAC.state === 'suspended') AmbiAC.resume(); } catch(e) {}
+  try { if (menuMusicAC && menuMusicAC.state === 'suspended') menuMusicAC.resume(); } catch(e) {}
+}
+function startMenuMusic() {
+  if (menuMusicPlaying) return;
+  menuMusicPlaying = true;
+  try {
+    menuMusicAC = new (window.AudioContext || window.webkitAudioContext)();
+    const ac = menuMusicAC;
+    const masterGain = ac.createGain(); masterGain.gain.value = 0.10; masterGain.connect(ac.destination);
+    // Gentle pad chords — cycle through Cm pentatonic: C3, Eb3, G3, Bb3, C4
+    const NOTES = [130.81, 155.56, 196.00, 233.08, 261.63, 196.00, 155.56, 130.81];
+    let noteIdx = 0;
+    function playPadNote() {
+      if (!menuMusicAC || menuMusicAC.state === 'closed') return;
+      const t = ac.currentTime;
+      const freq = NOTES[noteIdx % NOTES.length]; noteIdx++;
+      // Soft sine pad with slow attack/release
+      const osc = ac.createOscillator(); osc.type = 'sine'; osc.frequency.value = freq;
+      const osc2 = ac.createOscillator(); osc2.type = 'sine'; osc2.frequency.value = freq * 1.5;
+      const g = ac.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.55, t + 1.2);
+      g.gain.setValueAtTime(0.55, t + 1.8);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 3.2);
+      osc.connect(g); osc2.connect(g); g.connect(masterGain);
+      osc.start(t); osc.stop(t + 3.5);
+      osc2.start(t); osc2.stop(t + 3.5);
+      setTimeout(playPadNote, 1600 + Math.random() * 800);
+    }
+    playPadNote();
+    // Slow bass drone
+    const bass = ac.createOscillator(); bass.type = 'sine'; bass.frequency.value = 65.41;
+    const bassG = ac.createGain(); bassG.gain.value = 0.35;
+    bass.connect(bassG); bassG.connect(masterGain); bass.start();
+  } catch(e) {}
+}
+function stopMenuMusic() {
+  menuMusicPlaying = false;
+  try { if (menuMusicAC) { menuMusicAC.close(); menuMusicAC = null; } } catch(e) {}
 }
 function playJump() {
   if (!sfxOn) return;
@@ -741,7 +791,7 @@ function startAmbience() {
     (function chirp() {
       if (!AmbiAC) return;
       if (AmbiAC.state !== 'running') { setTimeout(chirp, 200); return; }
-      if (currentEvent === 'winter' || currentEvent === 'volcanic' || currentEvent === 'monsoon') { setTimeout(chirp, 2000); return; }
+      if (currentEvent === 'monsoon') { setTimeout(chirp, 2000); return; }
       const nA = nightAlpha(tod);
       if (nA > 0.15) {
         const t = ac.currentTime, vol = 0.035 + nA * 0.038;
@@ -761,7 +811,7 @@ function startAmbience() {
     (function birdCall() {
       if (!AmbiAC) return;
       if (AmbiAC.state !== 'running') { setTimeout(birdCall, 300); return; }
-      if (currentEvent === 'winter' || currentEvent === 'volcanic' || currentEvent === 'monsoon') { setTimeout(birdCall, 2000); return; }
+      if (currentEvent === 'monsoon') { setTimeout(birdCall, 2000); return; }
       const nA = nightAlpha(tod);
       const dayVol = Math.max(0, 1 - nA * 2.2);
       if (dayVol > 0.08) {
@@ -786,7 +836,7 @@ function startAmbience() {
     (function frogCroak() {
       if (!AmbiAC) return;
       if (AmbiAC.state !== 'running') { setTimeout(frogCroak, 400); return; }
-      if (currentEvent === 'winter' || currentEvent === 'volcanic' || currentEvent === 'monsoon') { setTimeout(frogCroak, 2000); return; }
+      if (currentEvent === 'monsoon') { setTimeout(frogCroak, 2000); return; }
       const nA = nightAlpha(tod);
       const vol = 0.03 + nA * 0.04;
       const t = ac.currentTime;
@@ -808,7 +858,7 @@ function startAmbience() {
     (function owlHoot() {
       if (!AmbiAC) return;
       if (AmbiAC.state !== 'running') { setTimeout(owlHoot, 600); return; }
-      if (currentEvent === 'winter' || currentEvent === 'volcanic' || currentEvent === 'monsoon') { setTimeout(owlHoot, 2000); return; }
+      if (currentEvent === 'monsoon') { setTimeout(owlHoot, 2000); return; }
       const nA = nightAlpha(tod);
       if (nA > 0.55) {
         const t = ac.currentTime;
@@ -830,7 +880,7 @@ function startAmbience() {
     (function drip() {
       if (!AmbiAC) return;
       if (AmbiAC.state !== 'running') { setTimeout(drip, 200); return; }
-      if (currentEvent === 'volcanic') { setTimeout(drip, 2000); return; }
+      if (false) { setTimeout(drip, 2000); return; }
       const t = ac.currentTime;
       const o = ac.createOscillator(), g = ac.createGain();
       o.type = 'sine';
@@ -998,14 +1048,7 @@ function drawBG() {
 
   // ── Sky ──────────────────────────────────────
   let skyTop, skyBot;
-  if (currentEvent === 'volcanic') {
-    skyTop = lerpC([55,20,5],   [90,35,10], 0.5 + Math.sin(wv*0.02)*0.1);
-    skyBot = lerpC([30,10,3],   [55,18,6],  0.5);
-  } else if (currentEvent === 'winter') {
-    const s = interpStops(SKY_STOPS, tod);
-    skyTop = lerpC(s.top, [150,185,210], 0.55);
-    skyBot = lerpC(s.bot, [110,150,180], 0.55);
-  } else if (currentEvent === 'spring') {
+  if (currentEvent === 'spring') {
     const s = interpStops(SKY_STOPS, tod);
     skyTop = lerpC(s.top, [78,155,95], 0.42);
     skyBot = lerpC(s.bot, [44,105,60], 0.42);
@@ -1022,8 +1065,8 @@ function drawBG() {
   ctx.fillStyle = grad; ctx.fillRect(0, 0, W, HORIZON);
 
   // Atmospheric haze band near horizon (swamp humidity)
-  if (currentEvent !== 'volcanic') {
-    const hazeA = currentEvent === 'winter' ? 0.18 : 0.14 + Math.sin(wv*0.007)*0.04;
+  if (true) {
+    const hazeA = 0.14 + Math.sin(wv*0.007)*0.04;
     const hazeCol = currentEvent === 'spring' ? 'rgba(160,210,150,' : 'rgba(110,150,100,';
     const hg = ctx.createLinearGradient(0, HORIZON - 40, 0, HORIZON + 30);
     hg.addColorStop(0, hazeCol + '0)');
@@ -1033,7 +1076,7 @@ function drawBG() {
   }
 
   // ── Stars ────────────────────────────────────
-  if (nA > 0 && currentEvent !== 'volcanic') {
+  if (nA > 0) {
     STARS.forEach(s => {
       s.tw += 0.012;
       const br = 0.45 + Math.sin(s.tw) * 0.55;
@@ -1046,7 +1089,7 @@ function drawBG() {
 
   // ── Moon ─────────────────────────────────────
   const mx = 340, my = 55;
-  if (nA > 0 && currentEvent !== 'volcanic') {
+  if (nA > 0) {
     ctx.globalAlpha = nA;
     // Eerie greenish moon halo through swamp mist
     const mhalo = ctx.createRadialGradient(mx, my, 0, mx, my, 62);
@@ -1064,9 +1107,9 @@ function drawBG() {
 
   // ── Sun (day, hazy through swamp atmosphere) ─
   const sunA = Math.max(0, 1 - nA * 2);
-  if (sunA > 0 && currentEvent !== 'volcanic') {
+  if (sunA > 0) {
     const sunX = 68, sunY = 52;
-    ctx.globalAlpha = sunA * (currentEvent === 'winter' ? 0.7 : 0.88);
+    ctx.globalAlpha = sunA * 0.88;
     const shalo = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, 52);
     shalo.addColorStop(0, 'rgba(255,238,160,0.28)');
     shalo.addColorStop(1, 'rgba(200,175,70,0)');
@@ -1079,52 +1122,13 @@ function drawBG() {
     ctx.globalAlpha = 1;
   }
 
-  // ── Volcano (volcanic event) ─────────────────
-  if (currentEvent === 'volcanic') {
-    // Anchored to the camera (not a fixed world position) so it never
-    // scrolls off-screen and disappears for the rest of the event.
-    const vsx = camX + W - 110;
-    {
-      // Ash cloud behind volcano
-      const ashg = ctx.createRadialGradient(vsx, HORIZON - 90, 0, vsx, HORIZON - 90, 120);
-      ashg.addColorStop(0, 'rgba(60,30,10,0.55)');
-      ashg.addColorStop(1, 'rgba(30,10,5,0)');
-      ctx.fillStyle = ashg; ctx.beginPath(); ctx.arc(vsx, HORIZON - 90, 120, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = '#2e1205';
-      ctx.beginPath();
-      ctx.moveTo(vsx-90,HORIZON); ctx.lineTo(vsx-22,HORIZON-132);
-      ctx.lineTo(vsx,HORIZON-154); ctx.lineTo(vsx+22,HORIZON-132);
-      ctx.lineTo(vsx+90,HORIZON); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = '#4a1a08';
-      ctx.beginPath();
-      ctx.moveTo(vsx-65,HORIZON); ctx.lineTo(vsx-16,HORIZON-122);
-      ctx.lineTo(vsx+65,HORIZON); ctx.closePath(); ctx.fill();
-      // Lava glow at crater
-      const lvg = ctx.createRadialGradient(vsx, HORIZON-152, 0, vsx, HORIZON-152, 38);
-      lvg.addColorStop(0, 'rgba(255,140,0,1)');
-      lvg.addColorStop(0.4, 'rgba(255,80,0,0.7)');
-      lvg.addColorStop(1, 'rgba(200,20,0,0)');
-      ctx.fillStyle = lvg; ctx.beginPath(); ctx.arc(vsx, HORIZON-152, 38, 0, Math.PI*2); ctx.fill();
-      // Lava glow on water (arc only, no full fillRect)
-      ctx.save(); ctx.globalAlpha = 0.20;
-      const lwg = ctx.createRadialGradient(vsx, HORIZON+50, 0, vsx, HORIZON+50, 200);
-      lwg.addColorStop(0, 'rgba(255,80,0,1)'); lwg.addColorStop(1, 'rgba(200,20,0,0)');
-      ctx.fillStyle = lwg; ctx.beginPath(); ctx.arc(vsx, HORIZON+50, 200, 0, Math.PI*2); ctx.fill();
-      ctx.restore();
-    }
-  }
-
   // ── Background parallax shift ─────────────────
   const bgShift = -camX / 3;
 
   // ── Far cypress treeline (two depth layers) ──
   // Far layer — shorter, desaturated
-  const farCol  = currentEvent === 'spring'   ? '#1a5a1e' :
-                  currentEvent === 'volcanic'  ? '#1e0c04' :
-                  currentEvent === 'winter'    ? '#223028' : '#0e1e0e';
-  const nearCol = currentEvent === 'spring'   ? '#122e14' :
-                  currentEvent === 'volcanic'  ? '#160a02' :
-                  currentEvent === 'winter'    ? '#18221a' : '#0a150a';
+  const farCol  = currentEvent === 'spring' ? '#1a5a1e' : '#0e1e0e';
+  const nearCol = currentEvent === 'spring' ? '#122e14' : '#0a150a';
   // Far layer
   for (let i = 0; i < CYPRESS_TREES.length; i++) {
     const ct = CYPRESS_TREES[i];
@@ -1140,8 +1144,8 @@ function drawBG() {
       const sx = ((ct.x + bgShift) % (W + ct.w*2) + W + ct.w*2) % (W + ct.w*2) - ct.w;
       if (sx > -50 && sx < W + 50) {
         drawCypress(sx, HORIZON, ct.h, ct.w, nearCol);
-        // Spanish moss on some near trees (not volcanic/winter)
-        if (currentEvent !== 'volcanic' && currentEvent !== 'winter' && ct.w > 12) {
+        // Spanish moss on some near trees
+        if (ct.w > 12) {
           drawMoss(sx, HORIZON - ct.h * 0.62, ct.w * 0.8, nearCol);
         }
       }
@@ -1150,7 +1154,7 @@ function drawBG() {
   // Gnarled dead trees scattered in
   for (let i = 0; i < GNARLED_TREES.length; i++) {
     const gt = GNARLED_TREES[i];
-    const gCol = currentEvent === 'volcanic' ? '#2a0e04' : currentEvent === 'winter' ? '#2a3530' : '#161e10';
+    const gCol = '#161e10';
     const gsx = ((gt.x + bgShift) % (W + 60) + W + 60) % (W + 60) - 30;
     drawGnarledTree(gsx, HORIZON, gt.h, gCol);
   }
@@ -1171,9 +1175,9 @@ function drawBG() {
   }
 
   // ── Swamp shore / land bank behind the treeline ─
-  if (currentEvent !== 'volcanic') {
-    const bankCol  = currentEvent === 'winter' ? '#1e2e26' : currentEvent === 'spring' ? '#1e4020' : '#141e10';
-    const bankCol2 = currentEvent === 'winter' ? '#28402e' : currentEvent === 'spring' ? '#285230' : '#1a2814';
+  {
+    const bankCol  = currentEvent === 'spring' ? '#1e4020' : '#141e10';
+    const bankCol2 = currentEvent === 'spring' ? '#285230' : '#1a2814';
     // Bank polygons extend 20px off-screen on each side so no corner is visible
     ctx.fillStyle = bankCol;
     ctx.beginPath(); ctx.moveTo(-20, HORIZON);
@@ -1209,12 +1213,7 @@ function drawBG() {
   // ── Water (murky swamp) ──────────────────────
   const ws = interpStops(WATER_STOPS, tod);
   let waterTop, waterBot;
-  if (currentEvent === 'volcanic') {
-    waterTop = lerpC(ws.top, [100,28,6], 0.62);
-    waterBot = lerpC(ws.bot, [65,14,3], 0.62);
-  } else if (currentEvent === 'winter') {
-    waterTop = [128, 165, 175]; waterBot = [88, 128, 145];
-  } else if (currentEvent === 'spring') {
+  if (currentEvent === 'spring') {
     waterTop = lerpC(ws.top, [28,78,42], 0.38);
     waterBot = lerpC(ws.bot, [14,48,24], 0.38);
   } else {
@@ -1227,7 +1226,7 @@ function drawBG() {
   ctx.fillStyle = wg; ctx.fillRect(0, HORIZON, W, H - HORIZON);
 
   // ── Algae surface patches ─────────────────────
-  if (currentEvent !== 'winter' && currentEvent !== 'volcanic') {
+  {
     ctx.save();
     for (let i = 0; i < ALGAE_PATCHES.length; i++) {
       const a = ALGAE_PATCHES[i];
@@ -1241,44 +1240,38 @@ function drawBG() {
 
 
   // ── Ground mist / fog layers ─────────────────
-  if (currentEvent !== 'volcanic') {
-    const baseA = currentEvent === 'monsoon' ? 0.52 + Math.sin(wv*0.01)*0.06
-                : currentEvent === 'winter' ? 0.30
-                : 0.18 + Math.sin(wv*0.007)*0.05;
-    // Main fog band at horizon
-    const fg = ctx.createLinearGradient(0, HORIZON - 8, 0, HORIZON + 60);
-    fg.addColorStop(0,   'rgba(120,155,108,0)');
-    fg.addColorStop(0.28, `rgba(118,148,105,${baseA * 0.65})`);
-    fg.addColorStop(0.62, `rgba(105,138,92,${baseA * 0.40})`);
-    fg.addColorStop(1,   'rgba(92,125,80,0)');
-    ctx.fillStyle = fg; ctx.fillRect(0, HORIZON - 8, W, 68);
+  {
+    const baseA = currentEvent === 'monsoon' ? 0.68 + Math.sin(wv*0.01)*0.08
+                : 0.38 + Math.sin(wv*0.007)*0.06;
+    // Tall fog bank — covers plants above horizon
+    const fogTop = HORIZON - 120;
+    const fg = ctx.createLinearGradient(0, fogTop, 0, HORIZON + 80);
+    fg.addColorStop(0,    'rgba(120,155,108,0)');
+    fg.addColorStop(0.35, `rgba(118,148,105,${baseA * 0.45})`);
+    fg.addColorStop(0.60, `rgba(112,142,98,${baseA * 0.80})`);
+    fg.addColorStop(0.82, `rgba(105,138,92,${baseA * 0.55})`);
+    fg.addColorStop(1,    'rgba(92,125,80,0)');
+    ctx.fillStyle = fg; ctx.fillRect(0, fogTop, W, HORIZON + 80 - fogTop);
     // Individual wisp blobs
     for (let i = 0; i < FOG_WISPS.length; i++) {
       const fw = FOG_WISPS[i];
       fw.x += fw.dx;
       if (fw.x > W + 90) fw.x = -90; if (fw.x < -90) fw.x = W + 90;
       const wy = fw.y + Math.sin(wv * fw.freq + fw.phase) * 6;
-      const wa = baseA * fw.alpha * (0.55 + Math.sin(wv * 0.009 + fw.phase) * 0.28);
+      const wa = baseA * fw.alpha * (0.7 + Math.sin(wv * 0.009 + fw.phase) * 0.28);
       if (wa < 0.01) continue;
       ctx.save(); ctx.globalAlpha = wa;
-      const wfg = ctx.createRadialGradient(fw.x, wy, 0, fw.x, wy, fw.rx);
+      const wfg = ctx.createRadialGradient(fw.x, wy, 0, fw.x, wy, fw.rx * 1.5);
       wfg.addColorStop(0, 'rgba(135,162,118,1)'); wfg.addColorStop(1, 'rgba(100,135,85,0)');
       ctx.fillStyle = wfg;
-      ctx.beginPath(); ctx.ellipse(fw.x, wy, fw.rx, fw.ry, 0, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(fw.x, wy, fw.rx * 1.5, fw.ry * 2, 0, 0, Math.PI*2); ctx.fill();
       ctx.restore();
     }
   }
-  // Volcanic ash haze over water
-  if (currentEvent === 'volcanic') {
-    const ag = ctx.createLinearGradient(0, HORIZON, 0, HORIZON + 80);
-    ag.addColorStop(0,  `rgba(80,30,8,${0.18 + Math.sin(wv*0.012)*0.06})`);
-    ag.addColorStop(1,  'rgba(40,12,3,0)');
-    ctx.fillStyle = ag; ctx.fillRect(0, HORIZON, W, 80);
-  }
 
   // ── Cattails / reeds ─────────────────────────
-  if (currentEvent !== 'winter') {
-    const ctBaseA = currentEvent === 'volcanic' ? 0.55 : 0.9;
+  {
+    const ctBaseA = 0.9;
     for (let i = 0; i < CATTAILS.length; i++) {
       const ct = CATTAILS[i];
       const cx = ((ct.x + bgShift) % (W + 120) + W + 120) % (W + 120) - 60;
@@ -1312,9 +1305,9 @@ function drawBG() {
 
 
   // ── Background decorative lily pads ─────────
-  if (currentEvent !== 'volcanic') {
-    const bgPadCol  = currentEvent === 'winter' ? '#2a4838' : currentEvent === 'spring' ? '#3a8830' : '#2e6228';
-    const bgPadCol2 = currentEvent === 'winter' ? '#3a5e48' : currentEvent === 'spring' ? '#52a840' : '#3a7a34';
+  {
+    const bgPadCol  = currentEvent === 'spring' ? '#3a8830' : '#2e6228';
+    const bgPadCol2 = currentEvent === 'spring' ? '#52a840' : '#3a7a34';
     ctx.save();
     for (let i = 0; i < BG_LILY_PADS.length; i++) {
       const bl = BG_LILY_PADS[i];
@@ -1343,38 +1336,9 @@ function drawBG() {
     ctx.restore();
   }
 
-  // ── Ice surface (winter event) ───────────────
-  if (currentEvent === 'winter') {
-    // Frost / snow on water surface
-    const iceG = ctx.createLinearGradient(0, WATER_Y - 8, 0, WATER_Y + 16);
-    iceG.addColorStop(0,   'rgba(210,240,255,0.70)');
-    iceG.addColorStop(0.5, 'rgba(190,225,248,0.45)');
-    iceG.addColorStop(1,   'rgba(160,205,235,0)');
-    ctx.fillStyle = iceG; ctx.fillRect(0, WATER_Y - 8, W, 24);
-    ctx.strokeStyle = 'rgba(210,238,255,0.85)'; ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.moveTo(0, WATER_Y - 2); ctx.lineTo(W, WATER_Y - 2); ctx.stroke();
-    // Ice crack network
-    ctx.strokeStyle = 'rgba(160,210,240,0.38)'; ctx.lineWidth = 0.7;
-    for (let ix = 30; ix < W; ix += 100) {
-      ctx.beginPath(); ctx.moveTo(ix, WATER_Y - 8);
-      ctx.lineTo(ix + 18, WATER_Y); ctx.lineTo(ix + 32, WATER_Y - 5);
-      ctx.lineTo(ix + 50, WATER_Y + 3); ctx.stroke();
-    }
-    // Snow particles
-    while (snowParts.length < 70) {
-      snowParts.push({ x:Math.random()*W, y:Math.random()*HORIZON, vy:0.5+Math.random()*1.5, vx:(Math.random()-0.5)*0.5, r:0.8+Math.random()*2.2 });
-    }
-    ctx.fillStyle = 'rgba(225,242,255,0.88)';
-    snowParts.forEach(s => {
-      s.y += s.vy; s.x += s.vx;
-      if (s.y > HORIZON) { s.y = -4; s.x = Math.random()*W; }
-      if (s.x < 0) s.x = W; if (s.x > W) s.x = 0;
-      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill();
-    });
-  } else { snowParts = []; }
 
   // ── Moon reflection (greenish cast) ──────────
-  if (nA > 0 && currentEvent !== 'volcanic') {
+  if (nA > 0) {
     const rip = Math.sin(wv * 0.055) * 7;
     for (let ry = 0; ry < 70; ry += 11) {
       const ww = Math.max(0, 5 + Math.sin(ry * 0.19 + wv * 0.038) * 10);
@@ -1385,56 +1349,6 @@ function drawBG() {
     }
   }
 
-  // ── Fire embers drifting through the sky (volcanic event) ──
-  if (currentEvent === 'volcanic') {
-    while (emberParts.length < 24) {
-      emberParts.push({
-        x: Math.random() * W, y: HORIZON + 10 + Math.random() * 30,
-        vy: -(0.3 + Math.random() * 0.6), vx: (Math.random() - 0.3) * 0.6,
-        r: 1 + Math.random() * 2, life: Math.random() * 60, maxLife: 90 + Math.random() * 120,
-        flick: Math.random() * Math.PI * 2
-      });
-    }
-    emberParts.forEach(e => {
-      e.x += e.vx; e.y += e.vy; e.life++; e.flick += 0.15;
-      if (e.life > e.maxLife || e.y < HORIZON - 260) {
-        e.y = HORIZON + 10 + Math.random() * 30; e.x = Math.random() * W;
-        e.life = 0; e.maxLife = 90 + Math.random() * 120;
-      }
-      const fade = Math.min(1, e.life / 20) * Math.min(1, (e.maxLife - e.life) / 20);
-      const flicker = 0.5 + Math.sin(e.flick) * 0.5;
-      ctx.save(); ctx.globalAlpha = fade * (0.3 + flicker * 0.4);
-      const eg = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r * 3);
-      eg.addColorStop(0, 'rgba(255,200,80,0.9)');
-      eg.addColorStop(0.5, 'rgba(255,110,30,0.5)');
-      eg.addColorStop(1, 'rgba(255,60,0,0)');
-      ctx.fillStyle = eg; ctx.beginPath(); ctx.arc(e.x, e.y, e.r * 3, 0, Math.PI*2); ctx.fill();
-      ctx.restore();
-    });
-  } else if (emberParts.length) { emberParts = []; }
-
-  // ── Steam rising off the water (volcanic event — lava-warmed swamp) ──
-  if (currentEvent === 'volcanic') {
-    while (steamParts.length < 20) {
-      steamParts.push({
-        x: Math.random() * W, y: WATER_Y - Math.random() * 10,
-        vy: -(0.25 + Math.random() * 0.35), vx: (Math.random() - 0.5) * 0.15,
-        r: 6 + Math.random() * 10, life: Math.random() * 80, maxLife: 100 + Math.random() * 100
-      });
-    }
-    steamParts.forEach(s => {
-      s.x += s.vx; s.y += s.vy; s.r += 0.04; s.life++;
-      if (s.life > s.maxLife) {
-        s.y = WATER_Y - Math.random() * 10; s.x = Math.random() * W;
-        s.r = 6 + Math.random() * 10; s.life = 0; s.maxLife = 100 + Math.random() * 100;
-      }
-      const fade = Math.sin(Math.min(1, s.life / s.maxLife) * Math.PI);
-      ctx.save(); ctx.globalAlpha = fade * 0.16;
-      ctx.fillStyle = '#e8e0d8';
-      ctx.beginPath(); ctx.ellipse(s.x, s.y, s.r, s.r * 0.55, 0, 0, Math.PI*2); ctx.fill();
-      ctx.restore();
-    });
-  } else if (steamParts.length) { steamParts = []; }
 
 }
 
@@ -1449,7 +1363,6 @@ function padSinkT() {
 function makePad(x, y, w) { return { x, y, baseY:y, w, st:0, t:-1 }; }
 function padTick(p, i) {
   if (p.st < 1) return;
-  if (currentEvent === 'winter') return; // frozen lake
   // Freeze pad timer while frog is balancing (spring=unlimited balance in frogTick)
   if (i === curPad && frog && frog.grounded && frog.balancing) return;
   p.t += 1/60;
@@ -1477,11 +1390,10 @@ function drawPad(p) {
   if (sx < -150 || sx > W + 150) return;
   const al = padAlpha(p);
   if (al <= 0) return;
-  const r = p.w * (currentEvent === 'spring' ? 1.4 : currentEvent === 'winter' ? 0.70 : 1) / 2;
+  const r = p.w * (currentEvent === 'spring' ? 1.4 : 1) / 2;
 
-  // Identical colors to background lily pads
-  const colMain  = currentEvent === 'winter' ? '#2a4838' : currentEvent === 'spring' ? '#3a8830' : '#2e6228';
-  const colLight = currentEvent === 'winter' ? '#3a5848' : currentEvent === 'spring' ? '#52a840' : '#4a8840';
+  const colMain  = currentEvent === 'spring' ? '#3a8830' : '#2e6228';
+  const colLight = currentEvent === 'spring' ? '#52a840' : '#4a8840';
 
   ctx.save(); ctx.globalAlpha = al;
   // Shadow — same as bg pads
@@ -1784,8 +1696,8 @@ function drawFrog() {
       for (let pi = curPad + 1; pi < Math.min(curPad + 5, pads.length); pi++) {
         const pp = pads[pi];
         if (pp.st === 3) continue;
-        const pw = pp.w * (currentEvent === 'spring' ? 1.4 : currentEvent === 'winter' ? 0.70 : 1);
-        if (Math.abs(simTx - pp.x) <= pw/2 + 4 && simTy >= pp.y - 24 && simTy <= pp.y + 10) {
+        const pw = pp.w * (currentEvent === 'spring' ? 1.4 : 1);
+        if (Math.abs(simTx - pp.x) <= pw/2 + 10 && simTy >= pp.y - 24 && simTy <= pp.y + 16) {
           landX = simTx; landY = pp.y - 23; landsOnPad = true; break;
         }
       }
@@ -2086,7 +1998,7 @@ function frogTick() {
       if (equippedBundle === 'cyborg' && prevCharge < 0.5 && f.charge >= 0.5) playCyborgCharge();
     }
     // Cancel balance if in a restricted context
-    if (f.balancing && (currentEvent === 'winter' || currentEvent === 'volcanic' || curPad === 0 || (frame < invincibleUntil && lives < 3))) {
+    if (f.balancing && (curPad === 0 || (frame < invincibleUntil && lives < 3))) {
       f.balancing = false; f.balanceT = 0;
     }
     if (f.balancing && currentEvent !== 'spring') {
@@ -2099,11 +2011,6 @@ function frogTick() {
         if (score > best) { best = score; isNewBest = true; saveProgress(); }
       }
     }
-    // Freeze: always during winter, but pads warm you
-    if (currentEvent === 'winter' && !f.dead) {
-      if (f.grounded && !f.onIce) { frozenDamageTimer = Math.max(0, frozenDamageTimer - 2); }
-      else { frozenDamageTimer++; if (frozenDamageTimer >= 240) { frozenDamageTimer = 0; takeDamage('ice'); } }
-    } else if (currentEvent !== 'winter') { frozenDamageTimer = 0; }
 
     // Sink detection
     if (curPad >= 0 && curPad < pads.length && pads[curPad].st === 3 && !f.onIce) {
@@ -2472,13 +2379,7 @@ function startEvent(type) {
   // Schedule next event 1-2 minutes after this one ends
   const cooldown = 60 * 1000;
   nextEventTime = eventEndTime + cooldown;
-  if (type === 'volcanic') {
-    volcanoX = frog.x + W * 0.8 + Math.random() * W;
-    lavaBombs = []; lavaSpawnTimer = 0;
-    startVolcanicAmbience();
-  } else if (type === 'winter') {
-    startWinterAmbience();
-  } else if (type === 'spring') {
+  if (type === 'spring') {
     startSpringAmbience();
   } else if (type === 'monsoon') {
     rainParts = []; lightningFlash = 0;
@@ -2490,8 +2391,7 @@ function startEvent(type) {
 function endEvent() {
   stopEventAmbience();
   currentEvent = null;
-  lavaBombs = [];
-  emberParts = []; steamParts = [];
+  lavaBombs = []; emberParts = []; steamParts = [];
   rainParts = []; lightningFlash = 0;
 }
 
@@ -2500,38 +2400,13 @@ function tickEvent() {
   const now = Date.now();
   // Start event if time reached — pick a random event, avoiding an immediate repeat
   if (!currentEvent && now >= nextEventTime) {
-    const pool = ['spring', 'volcanic', 'winter', 'monsoon'].filter(e => e !== lastEvent);
+    const pool = ['spring', 'monsoon'].filter(e => e !== lastEvent);
     const pick = pool[Math.floor(Math.random() * pool.length)];
     lastEvent = pick;
     startEvent(pick);
   }
   // End event when time up
   if (currentEvent && now >= eventEndTime) { endEvent(); return; }
-
-  if (currentEvent === 'volcanic') {
-    lavaSpawnTimer++;
-    if (lavaSpawnTimer >= 180) { // spawn every 3 seconds
-      lavaSpawnTimer = 0;
-      const vsx = camX + W - 110; // matches the always-visible volcano position
-      const angle = -Math.PI * 0.5 + (Math.random() - 0.5) * 0.9;
-      const spd = 6 + Math.random() * 4;
-      lavaBombs.push({ x: vsx, y: PAD_BASE_Y - 150, vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd, alive: true, r: 8 });
-    }
-    // Tick lava bombs
-    lavaBombs.forEach(lb => {
-      if (!lb.alive) return;
-      lb.vy += GRAVITY * 0.6;
-      lb.x += lb.vx; lb.y += lb.vy;
-      if (lb.y >= WATER_Y) { lb.alive = false; spark(lb.x, WATER_Y, 'splash'); return; }
-      // Hit frog
-      if (frame >= invincibleUntil && Math.hypot(lb.x - frog.x, lb.y - frog.y) < 24) {
-        lb.alive = false;
-        spark(lb.x, lb.y, 'land');
-        takeDamage('lava');
-      }
-    });
-    lavaBombs = lavaBombs.filter(lb => lb.alive || lb.y < WATER_Y + 10);
-  }
 
   if (currentEvent === 'monsoon') {
     lightningTimer--;
@@ -2642,8 +2517,6 @@ function trySpawnGator() {
 
 function tickGators() {
   if (!frog || frog.dead) return;
-  // No gators in winter
-  if (currentEvent === 'winter') { gators = []; return; }
   // Spawn cooldown
   gatorSpawnCooldown--;
   const _gatorMax = currentEvent === 'monsoon' ? 4 : 3;
@@ -2957,9 +2830,10 @@ function extendLevel() {
 
 // ── Start game ────────────────────────────────
 function startGame() {
+  stopMenuMusic();
   score = 0; isNewBest = false; frame = 0; wv = 0;
   holding = false; curPad = 0;
-  lives = 3; invincibleUntil = 0; lastDamageType = null;
+  lives = 3; invincibleUntil = 0; lastDamageType = null; heartRegenTimer = 0;
   secondChanceUsed = false;
   spawnGraceUntil = Date.now() + 1500;
   frogOnIce = false; frozenDamageTimer = 0;
@@ -3012,8 +2886,8 @@ function drawHUD() {
 
   // Event indicator
   if (currentEvent) {
-    const evNames = { volcanic:'🌋 VOLCANIC', winter:'❄️ WINTER', spring:'🌸 SPRING', monsoon:'🌧️ MONSOON' };
-    const evCols  = { volcanic:'#ff6030', winter:'#80c8ff', spring:'#80ff80', monsoon:'#9fb4d8' };
+    const evNames = { spring:'🌸 SPRING', monsoon:'🌧️ MONSOON' };
+    const evCols  = { spring:'#80ff80', monsoon:'#9fb4d8' };
     const evText  = evNames[currentEvent] || '';
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.beginPath(); ctx.roundRect(W/2 - 70, 12, 140, 28, 8); ctx.fill();
@@ -3062,14 +2936,6 @@ function drawHUD() {
     ctx.textAlign = 'left';
   }
 
-  // Frozen timer on ice
-  if (frog.onIce && currentEvent === 'winter') {
-    const sToNext = ((180 - frozenDamageTimer) / 60).toFixed(1);
-    ctx.fillStyle = 'rgba(0,30,60,0.65)';
-    ctx.beginPath(); ctx.roundRect(W/2 - 70, H - 64, 140, 26, 6); ctx.fill();
-    ctx.fillStyle = '#a0e0ff'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('❄️ FREEZING  ' + sToNext + 's', W/2, H - 44); ctx.textAlign = 'left';
-  }
 
   // JUMP timer
   if (!frog.balancing) {
@@ -3435,44 +3301,10 @@ function drawFrogsPage() {
 // ── Main menu ─────────────────────────────────
 // ── Opening intro: two frogs chilling on a big lily pad ──
 function drawIntro() {
-  // Dusk swamp backdrop
-  const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, '#15233a'); g.addColorStop(0.45, '#27415c');
-  g.addColorStop(0.62, '#2c5a50'); g.addColorStop(1, '#143626');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-  // Stars
-  ctx.fillStyle = 'rgba(255,255,255,0.55)';
-  for (let i = 0; i < 46; i++) {
-    const x = (i * 97 + 30) % W, y = (i * 53) % 200;
-    const tw = 0.4 + 0.6 * (0.5 + Math.sin(frame * 0.05 + i) * 0.5);
-    ctx.globalAlpha = tw; ctx.fillRect(x, y, 1.6, 1.6);
-  }
-  ctx.globalAlpha = 1;
-  // Moon
-  ctx.fillStyle = 'rgba(232,242,214,0.92)';
-  ctx.beginPath(); ctx.arc(W - 86, 86, 30, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle = 'rgba(232,242,214,0.16)';
-  ctx.beginPath(); ctx.arc(W - 86, 86, 44, 0, Math.PI*2); ctx.fill();
-  // Distant reeds silhouette
-  const wy = H * 0.6;
-  ctx.strokeStyle = 'rgba(8,24,16,0.8)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
-  for (let i = 0; i < 9; i++) {
-    const rx = 20 + i * 56, sway = Math.sin(frame * 0.02 + i) * 4;
-    ctx.beginPath(); ctx.moveTo(rx, wy + 6);
-    ctx.quadraticCurveTo(rx + sway, wy - 30, rx + sway * 1.6, wy - 52); ctx.stroke();
-  }
-  // Water
-  const wg = ctx.createLinearGradient(0, wy, 0, H);
-  wg.addColorStop(0, '#214c45'); wg.addColorStop(1, '#0f261f');
-  ctx.fillStyle = wg; ctx.fillRect(0, wy, W, H - wy);
-  // Moon reflection shimmer
-  for (let r = 0; r < 70; r += 11) {
-    const ww = Math.max(0, 6 + Math.sin(r * 0.2 + frame * 0.05) * 9);
-    ctx.fillStyle = `rgba(232,242,214,${0.12 - r * 0.0012})`;
-    ctx.beginPath(); ctx.ellipse(W - 86, wy + 14 + r, ww, 1.4, 0, 0, Math.PI*2); ctx.fill();
-  }
-  // Big lily pad
-  const lpX = W/2, lpY = wy + 46;
+  // Use the real in-game swamp background
+  drawBG();
+  // Big lily pad sits on the water
+  const lpX = W/2, lpY = WATER_Y - 10;
   ctx.fillStyle = 'rgba(0,0,0,0.28)';
   ctx.beginPath(); ctx.ellipse(lpX + 6, lpY + 12, 158, 42, 0, 0, Math.PI*2); ctx.fill();
   ctx.fillStyle = '#2f7a34';
@@ -3532,6 +3364,9 @@ function drawMenu() {
     ctx.fillStyle = shade(uiColor, 0.85); ctx.font = 'bold 14px Arial'; ctx.fillText('SETTINGS', W/2, 445);
     if (best > 0) { ctx.fillStyle = '#ffd700'; ctx.font = '14px Arial'; ctx.fillText('Best: ' + best, W/2, 484); }
     ctx.fillStyle = 'rgba(255,255,255,0.28)'; ctx.font = '12px Arial'; ctx.fillText('Space · Click · Tap', W/2, H - 18);
+    // Corner hint
+    ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(255,255,255,0.22)'; ctx.font = '11px Arial';
+    ctx.fillText('Planning to add different enviorments in the future 👀', 10, H - 6);
 
   } else if (menuPage === 'frogs') {
     drawFrogsPage(); ctx.textAlign = 'left'; return;
@@ -4069,7 +3904,7 @@ function canvasXY(e) {
 function press(px = W/2, py = H/2) {
   resumeAC(); startAmbience();
 
-  if (gs === 'intro') { introDone = true; gs = 'menu'; menuPage = 'main'; return; }
+  if (gs === 'intro') { introDone = true; gs = 'menu'; menuPage = 'main'; startMenuMusic(); return; }
 
   if (gs === 'menu') {
     if (menuPage === 'main') {
@@ -4209,8 +4044,14 @@ function press(px = W/2, py = H/2) {
       if (inRect(px, py, 0, 102, W, 56)) { sfxOn = !sfxOn; saveProgress(); return; }
       if (inRect(px, py, 0, 162, W, 56)) {
         ambienceOn = !ambienceOn;
-        if (AmbiAC) { if (ambienceOn) AmbiAC.resume(); else AmbiAC.suspend(); }
-        if (!ambienceOn) stopEventAmbience();
+        if (ambienceOn) {
+          resumeAC();
+          if (!ambiStarted) startAmbience();
+          if (currentEvent) startEvent(currentEvent); // restart event ambience
+        } else {
+          if (AmbiAC) AmbiAC.suspend();
+          stopEventAmbience();
+        }
         saveProgress();
         return;
       }
@@ -4250,11 +4091,11 @@ function press(px = W/2, py = H/2) {
         curPad = respawnPad; saveProgress(); return;
       }
       if (inRect(px, py, W/2-90, 398, 180, 52)) { startGame(); return; }
-      if (inRect(px, py, W/2-80, 462, 160, 40)) { gs='menu'; menuPage='main'; return; }
+      if (inRect(px, py, W/2-80, 462, 160, 40)) { gs='menu'; menuPage='main'; startMenuMusic(); return; }
     } else {
       // Normal death layout: TRY AGAIN y=350, Return to menu y=416
       if (inRect(px, py, W/2-90, 350, 180, 52)) { startGame(); return; }
-      if (inRect(px, py, W/2-80, 416, 160, 40)) { gs='menu'; menuPage='main'; return; }
+      if (inRect(px, py, W/2-80, 416, 160, 40)) { gs='menu'; menuPage='main'; startMenuMusic(); return; }
       // Catch-all: any other click after a short delay also restarts
       if (elapsed > 1200) { startGame(); return; }
     }
@@ -4263,7 +4104,7 @@ function press(px = W/2, py = H/2) {
 
   // Return to Menu button (visible on first pad or post-respawn)
   if (score === 0 || (frame < invincibleUntil && lives < 3)) {
-    if (inRect(px, py, W - 162, H - 50, 150, 34)) { gs = 'menu'; menuPage = 'main'; return; }
+    if (inRect(px, py, W - 162, H - 50, 150, 34)) { gs = 'menu'; menuPage = 'main'; startMenuMusic(); return; }
   }
 
   holding = true;
@@ -4284,18 +4125,48 @@ document.addEventListener('keydown', e => {
   if (e.code === 'KeyQ' && !e.repeat && gs === 'play') {
     const f = frog;
     const canBalance = f.grounded && !f.dead
-      && currentEvent !== 'winter'
-      && currentEvent !== 'volcanic'
       && curPad !== 0
       && !(frame < invincibleUntil && lives < 3);
-    if (canBalance) { f.balancing = !f.balancing; if (!f.balancing) f.balanceT = 0; }
+    if (canBalance) {
+      f.balancing = !f.balancing;
+      if (f.balancing) { f.charging = false; f.charge = 0; }
+      else f.balanceT = 0;
+    }
   }
 });
 document.addEventListener('keyup', e => { if (e.code === 'Space') { e.preventDefault(); release(); } });
-C.addEventListener('mousedown', e => { const [x, y] = canvasXY(e); press(x, y); });
+C.addEventListener('mousedown', e => {
+  if (e.button === 2 && gs === 'play' && frog) {
+    e.preventDefault();
+    const f = frog;
+    const canBalance = f.grounded && !f.dead && curPad !== 0 && !(frame < invincibleUntil && lives < 3);
+    if (canBalance) {
+      f.balancing = !f.balancing;
+      if (f.balancing) { f.charging = false; f.charge = 0; } // cancel charge when balancing
+      else f.balanceT = 0;
+    }
+    return;
+  }
+  const [x, y] = canvasXY(e); press(x, y);
+});
+C.addEventListener('contextmenu', e => { if (gs === 'play') e.preventDefault(); });
 C.addEventListener('mouseup', release);
 C.addEventListener('mousemove', e => { const [x, y] = canvasXY(e); cursorWX = x + camX; cursorWY = y; });
-C.addEventListener('touchstart', e => { e.preventDefault(); const [x, y] = canvasXY(e); press(x, y); }, { passive: false });
+C.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (e.touches.length >= 2 && gs === 'play' && frog) {
+    // Two-finger tap = balance toggle on mobile
+    const f = frog;
+    const canBalance = f.grounded && !f.dead && curPad !== 0 && !(frame < invincibleUntil && lives < 3);
+    if (canBalance) {
+      f.balancing = !f.balancing;
+      if (f.balancing) { f.charging = false; f.charge = 0; }
+      else f.balanceT = 0;
+    }
+    return;
+  }
+  const [x, y] = canvasXY(e); press(x, y);
+}, { passive: false });
 C.addEventListener('touchend', e => { e.preventDefault(); release(); }, { passive: false });
 
 // ── Main loop ─────────────────────────────────
@@ -4321,7 +4192,7 @@ function loop(ts) {
     pads.forEach(p => { p.x -= PAD_DRIFT; });
     if (frog && frog.grounded) frog.x -= PAD_DRIFT;
     camX -= PAD_DRIFT; // keep camera in sync
-    if (currentEvent !== 'winter') bgPads.forEach(bp => { bp.x -= PAD_DRIFT * 0.5; });
+    bgPads.forEach(bp => { bp.x -= PAD_DRIFT * 0.5; });
     const prevFrogY = frog ? frog.y : 0;
     frogTick();
     // Bg lily pads scroll only while the frog is actually airborne (a real leap),
@@ -4331,6 +4202,13 @@ function loop(ts) {
     lilyScrollVel += (_lilyTarget - lilyScrollVel) * 0.12;
     if (Math.abs(lilyScrollVel) < 0.002) lilyScrollVel = 0;
     lilyScroll += lilyScrollVel;
+    // Heart regen: +1 life every 50s while alive and not balancing, max 3
+    if (frog && !frog.dead && !frog.balancing && lives < 3) {
+      heartRegenTimer += 1/69; // ~69fps
+      if (heartRegenTimer >= 50) { heartRegenTimer = 0; lives = Math.min(3, lives + 1); }
+    } else if (frog && (frog.dead || frog.balancing)) {
+      // freeze timer while dead or balancing
+    }
     tickBugs();
     tickEvent();
     camX += (frog.x - 170 - camX) * 0.07;
@@ -4348,7 +4226,7 @@ function loop(ts) {
       for (let i = curPad + 1; i < Math.min(curPad + 5, pads.length); i++) {
         const p = pads[i];
         if (p.st === 3) continue;
-        if (Math.abs(frog.x - p.x) <= (p.w * padW)/2 + 4 &&
+        if (Math.abs(frog.x - p.x) <= (p.w * padW)/2 + 10 &&
             frog.y >= p.y - 24 && prevFrogY <= p.y + 16) {
           frog.grounded = true; frog.vy = 0; frog.vx = 0;
           frog.alpha = 1;
@@ -4366,6 +4244,7 @@ function loop(ts) {
           if (score >= WIN && !isNewBest) {
             if (score > best) { best = score; isNewBest = true; }
             gamesWon++;
+            lilyPadsBalance += 10; lilyPadsTotal += 10;
             if (WIN < 100) WIN = Math.min(100, 30 + (gamesWon - 1) * 10);
             else WIN = Infinity; // endless after reaching 100
             saveProgress();
@@ -4376,33 +4255,17 @@ function loop(ts) {
           break;
         }
       }
-      // Ice landing (winter event)
-      if (!frog.grounded && currentEvent === 'winter' && frog.y >= WATER_Y - 4 && prevFrogY <= WATER_Y + 8) {
-        frog.grounded = true; frog.vy = 0; frog.vx = 0;
-        frog.sqY = 0.84; frog.sqX = 1.10;
-        frog.y = WATER_Y - 2;
-        frog.onIce = true; frozenDamageTimer = 0;
-        spark(frog.x, WATER_Y, 'land');
-        setTimeout(playLand, 0);
-        if (score >= WIN && !isNewBest) {
-          if (score > best) { best = score; isNewBest = true; }
-          gamesWon++; if (WIN < 100) WIN = Math.min(100, 30 + (gamesWon-1)*10); else WIN = Infinity;
-          saveProgress(); deathType = 'win'; deathFrame = frame;
-          frog.dead = true; gs = 'dead'; gameEndTime = Date.now();
-          deathPhraseIdx = Math.floor(Math.random() * WIN_PHRASES.length);
-        }
-      }
     }
 
-    // Sunk pad death
-    if (frog.grounded && !frog.onIce && curPad >= 0 && pads[curPad].st === 3) {
+    // Sunk pad death — trigger when pad starts sinking (st=2), not after fully sunken
+    if (frog.grounded && !frog.onIce && curPad >= 0 && pads[curPad].st >= 2) {
       if (frame >= invincibleUntil) {
         takeDamage('sink');
       }
     }
 
-    // Water hit (missed all pads and not on ice)
-    if (!frog.grounded && !frog.dead && frog.y >= WATER_Y && currentEvent !== 'winter') {
+    // Water hit (missed all pads)
+    if (!frog.grounded && !frog.dead && frog.y >= WATER_Y) {
       if (frame >= invincibleUntil) {
         takeDamage('water');
         // If takeDamage returned early (spawn grace still active), stop frog at surface
@@ -4410,8 +4273,8 @@ function loop(ts) {
           frog.y = WATER_Y - 2; frog.vy = 0; frog.vx = 0;
         }
       } else {
-        // Invincible — bounce
-        frog.y = WATER_Y - 4; frog.vy = -4;
+        // Invincible — hold at surface, no bounce
+        frog.y = WATER_Y - 2; frog.vy = 0; frog.vx = 0;
       }
     }
 
@@ -4469,7 +4332,7 @@ function loop(ts) {
     drawMenu();
   } else {
     // Dead / win state
-    if (Date.now() - gameEndTime > AUTO_MENU_DELAY) { gs = 'menu'; menuPage = 'main'; }
+    if (Date.now() - gameEndTime > AUTO_MENU_DELAY) { gs = 'menu'; menuPage = 'main'; startMenuMusic(); }
     if (pads) { ctx.globalAlpha = 1; pads.forEach(drawPad); }
     ctx.globalAlpha = 1; tickParts();
     ctx.globalAlpha = 1; drawGators();
