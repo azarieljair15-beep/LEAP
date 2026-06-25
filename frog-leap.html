@@ -431,6 +431,9 @@ let lavaBombs = [];
 let lavaSpawnTimer = 0;
 let gators = [], gatorSpawnCooldown = 0;
 let snowParts = [];
+let emberParts = [];   // floating fire embers in the sky (volcanic event)
+let steamParts = [];   // steam wisps rising off the water (volcanic event)
+let dustParts = [];    // tiny ambient dust motes drifting on the wind (always)
 
 // ── Menu / Settings ───────────────────────────
 let menuPage = 'main';
@@ -520,6 +523,17 @@ function loadProgress() {
   } catch(e) {}
 }
 loadProgress();
+
+// ── Color helpers ─────────────────────────────
+function hexToRgb(hex) {
+  if (!hex || !hex.startsWith('#') || hex.length < 7) return [80,200,80];
+  return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)];
+}
+function skinColRgba(prop, alpha) {
+  const c = getSkinProp(prop);
+  if (c.startsWith('#')) { const [r,g,b] = hexToRgb(c); return `rgba(${r},${g},${b},${alpha})`; }
+  return c.replace('hsl(','hsla(').replace(')',`,${alpha})`);
+}
 
 // ── Skin helpers ──────────────────────────────
 function getSkinProp(prop, overrideSkin) {
@@ -1030,8 +1044,10 @@ function drawBG() {
 
   // ── Volcano (volcanic event) ─────────────────
   if (currentEvent === 'volcanic') {
-    const vsx = volcanoX - camX;
-    if (vsx > -220 && vsx < W + 220) {
+    // Anchored to the camera (not a fixed world position) so it never
+    // scrolls off-screen and disappears for the rest of the event.
+    const vsx = camX + W - 110;
+    {
       // Ash cloud behind volcano
       const ashg = ctx.createRadialGradient(vsx, HORIZON - 90, 0, vsx, HORIZON - 90, 120);
       ashg.addColorStop(0, 'rgba(60,30,10,0.55)');
@@ -1341,6 +1357,75 @@ function drawBG() {
     }
   }
 
+  // ── Fire embers drifting through the sky (volcanic event) ──
+  if (currentEvent === 'volcanic') {
+    while (emberParts.length < 24) {
+      emberParts.push({
+        x: Math.random() * W, y: HORIZON + 10 + Math.random() * 30,
+        vy: -(0.3 + Math.random() * 0.6), vx: (Math.random() - 0.3) * 0.6,
+        r: 1 + Math.random() * 2, life: Math.random() * 60, maxLife: 90 + Math.random() * 120,
+        flick: Math.random() * Math.PI * 2
+      });
+    }
+    emberParts.forEach(e => {
+      e.x += e.vx; e.y += e.vy; e.life++; e.flick += 0.15;
+      if (e.life > e.maxLife || e.y < HORIZON - 260) {
+        e.y = HORIZON + 10 + Math.random() * 30; e.x = Math.random() * W;
+        e.life = 0; e.maxLife = 90 + Math.random() * 120;
+      }
+      const fade = Math.min(1, e.life / 20) * Math.min(1, (e.maxLife - e.life) / 20);
+      const flicker = 0.5 + Math.sin(e.flick) * 0.5;
+      ctx.save(); ctx.globalAlpha = fade * (0.3 + flicker * 0.4);
+      const eg = ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r * 3);
+      eg.addColorStop(0, 'rgba(255,200,80,0.9)');
+      eg.addColorStop(0.5, 'rgba(255,110,30,0.5)');
+      eg.addColorStop(1, 'rgba(255,60,0,0)');
+      ctx.fillStyle = eg; ctx.beginPath(); ctx.arc(e.x, e.y, e.r * 3, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    });
+  } else if (emberParts.length) { emberParts = []; }
+
+  // ── Steam rising off the water (volcanic event — lava-warmed swamp) ──
+  if (currentEvent === 'volcanic') {
+    while (steamParts.length < 20) {
+      steamParts.push({
+        x: Math.random() * W, y: WATER_Y - Math.random() * 10,
+        vy: -(0.25 + Math.random() * 0.35), vx: (Math.random() - 0.5) * 0.15,
+        r: 6 + Math.random() * 10, life: Math.random() * 80, maxLife: 100 + Math.random() * 100
+      });
+    }
+    steamParts.forEach(s => {
+      s.x += s.vx; s.y += s.vy; s.r += 0.04; s.life++;
+      if (s.life > s.maxLife) {
+        s.y = WATER_Y - Math.random() * 10; s.x = Math.random() * W;
+        s.r = 6 + Math.random() * 10; s.life = 0; s.maxLife = 100 + Math.random() * 100;
+      }
+      const fade = Math.sin(Math.min(1, s.life / s.maxLife) * Math.PI);
+      ctx.save(); ctx.globalAlpha = fade * 0.16;
+      ctx.fillStyle = '#e8e0d8';
+      ctx.beginPath(); ctx.ellipse(s.x, s.y, s.r, s.r * 0.55, 0, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    });
+  } else if (steamParts.length) { steamParts = []; }
+
+  // ── Tiny ambient dust motes drifting on the wind (always on) ──
+  while (dustParts.length < 30) {
+    dustParts.push({
+      x: Math.random() * W, y: Math.random() * (HORIZON + 60),
+      vx: 0.2 + Math.random() * 0.5, vy: (Math.random() - 0.5) * 0.12,
+      r: 0.4 + Math.random() * 0.8, a: 0.08 + Math.random() * 0.12
+    });
+  }
+  ctx.fillStyle = '#e8dcc0';
+  dustParts.forEach(d => {
+    d.x += d.vx; d.y += d.vy;
+    if (d.x > W + 5) { d.x = -5; d.y = Math.random() * (HORIZON + 60); }
+    if (d.y < -5) d.y = HORIZON + 60;
+    if (d.y > HORIZON + 65) d.y = -5;
+    ctx.save(); ctx.globalAlpha = d.a;
+    ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  });
 }
 
 // ── Pad helpers ───────────────────────────────
@@ -1376,25 +1461,38 @@ function drawPad(p) {
   const al = padAlpha(p);
   if (al <= 0) return;
   const padW = p.w * (currentEvent === 'spring' ? 1.4 : currentEvent === 'winter' ? 0.70 : 1);
-  ctx.save(); ctx.globalAlpha = al; ctx.translate(sx, p.y);
-  // Shadow — skip on ice surface (winter) since pads sit on frozen water
+  const r  = padW / 2;
+  const ry = Math.max(8, r * 0.30); // flat lily-pad shape like bg pads
+
+  const colMain  = currentEvent === 'spring' ? '#4aaa30' : currentEvent === 'winter' ? '#2a7060' : '#347034';
+  const colLight = currentEvent === 'spring' ? '#72d852' : currentEvent === 'winter' ? '#3a9080' : '#52a84e';
+  const colDark  = currentEvent === 'spring' ? '#1e4418' : currentEvent === 'winter' ? '#183830' : '#1a3018';
+  const colLine  = currentEvent === 'spring' ? '#2a5a18' : currentEvent === 'winter' ? '#1a4838' : '#204820';
+
+  ctx.save(); ctx.globalAlpha = al;
+  // Shadow
   if (currentEvent !== 'winter') {
-    ctx.fillStyle = currentEvent === 'spring' ? '#1a3818' : '#142814';
-    ctx.beginPath(); ctx.ellipse(3, 11, padW/2, 11, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.beginPath(); ctx.ellipse(sx + 3, p.y + ry * 0.9, r * 0.90, ry * 0.65, 0, 0, Math.PI*2); ctx.fill();
   }
-  ctx.fillStyle = currentEvent === 'spring' ? '#4aaa30' : '#347034';
-  ctx.beginPath(); ctx.ellipse(0, 0, padW/2, 12, 0, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle = currentEvent === 'spring' ? '#70d050' : '#4ea04e';
-  ctx.beginPath(); ctx.ellipse(-1, -3, padW/2 - 9, 7, 0, 0, Math.PI*2); ctx.fill();
-  ctx.strokeStyle = currentEvent === 'spring' ? '#306820' : '#215221'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(0, -11); ctx.lineTo(0, 11); ctx.stroke();
-  ctx.beginPath(); ctx.arc(0, 0, padW/2, Math.PI + 0.12, -0.12); ctx.stroke();
-  // Spring: small flower
+  // Main pad
+  ctx.fillStyle = colMain;
+  ctx.beginPath(); ctx.ellipse(sx, p.y, r, ry, 0, 0, Math.PI*2); ctx.fill();
+  // Highlight
+  ctx.fillStyle = colLight;
+  ctx.beginPath(); ctx.ellipse(sx - r*0.07, p.y - ry*0.15, r * 0.70, ry * 0.50, -0.1, 0, Math.PI*2); ctx.fill();
+  // Notch line from centre to edge
+  ctx.strokeStyle = colLine; ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.moveTo(sx, p.y - ry); ctx.lineTo(sx, p.y + ry); ctx.stroke();
+  // Outer rim arc (subtle darker border)
+  ctx.strokeStyle = colDark; ctx.lineWidth = 1.0;
+  ctx.beginPath(); ctx.ellipse(sx, p.y, r, ry, 0, 0, Math.PI*2); ctx.stroke();
+  // Spring flower
   if (currentEvent === 'spring' && Math.abs(p.x % 3) < 1) {
     ctx.fillStyle = '#ffaacc';
-    ctx.beginPath(); ctx.arc(padW/2 - 8, -6, 4, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx + r * 0.52, p.y - ry * 0.25, r * 0.10, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = '#ffe040';
-    ctx.beginPath(); ctx.arc(padW/2 - 8, -6, 2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx + r * 0.52, p.y - ry * 0.25, r * 0.05, 0, Math.PI*2); ctx.fill();
   }
   ctx.restore();
   // Warning ring
@@ -1405,7 +1503,7 @@ function drawPad(p) {
     ctx.strokeStyle = urg > 0.65 ? `rgb(255,${(88*(1-urg))|0},0)` : '#d0a020';
     ctx.lineWidth = 2 + urg * 2;
     ctx.beginPath();
-    ctx.ellipse(sx, p.y, padW/2 + 6, 14, 0, 0, Math.PI*2);
+    ctx.ellipse(sx, p.y, r + 5, ry + 4, 0, 0, Math.PI*2);
     ctx.stroke(); ctx.restore();
   }
 }
@@ -1434,10 +1532,7 @@ function drawTrail() {
     const sx = p.x - camX;
     if (sx < -20 || sx > W + 20) continue;
     if (equippedBundle === 'cyborg') {
-      const r2 = t > 0.6 ? 0 : 0;
-      const g2 = t > 0.6 ? 80 : t > 0.3 ? 140 : 200;
-      const b2 = 255;
-      ctx.fillStyle = `rgba(${r2},${g2},${b2},${alpha})`;
+      ctx.fillStyle = skinColRgba('body', alpha);
     } else if (equippedTrail === 'fire') {
       const r = t > 0.6 ? 255 : 255;
       const g2 = t > 0.6 ? 60 : t > 0.3 ? 130 : 220;
@@ -1462,7 +1557,8 @@ function drawFrog() {
   const isInvincible = frame < invincibleUntil;
 
   ctx.save();
-  ctx.globalAlpha = f.alpha;
+  const _inv = frame < invincibleUntil;
+  ctx.globalAlpha = (_inv && (frame & 4)) ? 0.15 : f.alpha;
   ctx.translate(sx, sy);
   ctx.rotate(f.rot);
   ctx.scale(f.sqX, f.sqY);
@@ -1473,23 +1569,30 @@ function drawFrog() {
   const eyeCol  = getSkinProp('eye');
   const olCol   = getSkinProp('ol');
 
-  // Back legs (behind body)
+  // Back legs (behind body) — right side skipped for cyborg (drawn later in correct pose)
+  const _cyborg = equippedBundle === 'cyborg';
   ctx.fillStyle = legCol;
   if (!f.grounded) {
     ctx.beginPath(); ctx.ellipse(-30,  1, 14,  8, -0.15, 0, Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.ellipse(-33, 11, 12,  7,  0.05, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse( 30,  1, 14,  8,  0.15, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse( 33, 11, 12,  7, -0.05, 0, Math.PI*2); ctx.fill();
+    if (!_cyborg) {
+      ctx.beginPath(); ctx.ellipse( 30,  1, 14,  8,  0.15, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse( 33, 11, 12,  7, -0.05, 0, Math.PI*2); ctx.fill();
+    }
   } else if (f.charging) {
     ctx.beginPath(); ctx.ellipse(-21,  8, 12,  9,  0.45, 0, Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.ellipse(-18, 20, 10,  7,  0.10, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse( 21,  8, 12,  9, -0.45, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse( 18, 20, 10,  7, -0.10, 0, Math.PI*2); ctx.fill();
+    if (!_cyborg) {
+      ctx.beginPath(); ctx.ellipse( 21,  8, 12,  9, -0.45, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse( 18, 20, 10,  7, -0.10, 0, Math.PI*2); ctx.fill();
+    }
   } else {
     ctx.beginPath(); ctx.ellipse(-24,  6, 13, 10,  0.30, 0, Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.ellipse(-21, 18, 11,  8,  0.08, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse( 24,  6, 13, 10, -0.30, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse( 21, 18, 11,  8, -0.08, 0, Math.PI*2); ctx.fill();
+    if (!_cyborg) {
+      ctx.beginPath(); ctx.ellipse( 24,  6, 13, 10, -0.30, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse( 21, 18, 11,  8, -0.08, 0, Math.PI*2); ctx.fill();
+    }
   }
 
   // Main body blob
@@ -1554,46 +1657,59 @@ function drawFrog() {
   if (equippedAccessory2) drawAccessory(equippedAccessory2);
 
   // Cyborg bundle: overdraw right half with mechanical look
-  if (equippedBundle === 'cyborg') {
-    // Right back legs — darker than arm, painted before body overlay
+  if (_cyborg) {
+    const _cbAcc  = getSkinProp('body');   // accent / circuit colour
+    const _cbGlow = getSkinProp('belly');  // inner glow colour
+    const _cbEye  = getSkinProp('eye');    // dark eye bg
+
+    // Right back legs — pose-aware, drawn BEFORE body overlay
     ctx.fillStyle = '#0c0c18';
-    ctx.beginPath(); ctx.ellipse(24,6,13,10,-0.30,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(21,18,11,8,-0.08,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#4080ff';
-    ctx.beginPath(); ctx.arc(25,6,2.5,0,Math.PI*2); ctx.fill();
-    // Right arm — slightly lighter than leg
+    if (!f.grounded) {
+      ctx.beginPath(); ctx.ellipse(30,1,14,8,0.15,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(33,11,12,7,-0.05,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = _cbAcc;
+      ctx.beginPath(); ctx.arc(31,2,2.5,0,Math.PI*2); ctx.fill();
+    } else if (f.charging) {
+      ctx.beginPath(); ctx.ellipse(21,8,12,9,-0.45,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(18,20,10,7,-0.10,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = _cbAcc;
+      ctx.beginPath(); ctx.arc(22,8,2.5,0,Math.PI*2); ctx.fill();
+    } else {
+      ctx.beginPath(); ctx.ellipse(24,6,13,10,-0.30,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(21,18,11,8,-0.08,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = _cbAcc;
+      ctx.beginPath(); ctx.arc(25,6,2.5,0,Math.PI*2); ctx.fill();
+    }
+    // Right arm
     ctx.fillStyle = '#1e1e2e';
     ctx.beginPath(); ctx.ellipse(17,9,9,7,0.30,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#4080ff';
+    ctx.fillStyle = _cbAcc;
     ctx.beginPath(); ctx.arc(20,10,2.5,0,Math.PI*2); ctx.fill();
 
-    // Right body half — clip to body ellipse shape (no rectangle)
+    // Right body half — clip to body ellipse
     ctx.save();
     ctx.beginPath();
-    ctx.ellipse(0,-2,22,20,0,-Math.PI/2,Math.PI/2); // arc: (0,-22) → (22,-2) → (0,18)
+    ctx.ellipse(0,-2,22,20,0,-Math.PI/2,Math.PI/2);
     ctx.lineTo(0,-2); ctx.closePath();
     ctx.clip();
-    // Dark metallic fill
     ctx.fillStyle = '#2a2a3a';
     ctx.fillRect(-1,-30,30,55);
-    // Circuit lines inside body
-    ctx.strokeStyle = '#4080ff'; ctx.lineWidth = 1.2; ctx.lineCap = 'round';
+    ctx.strokeStyle = _cbAcc; ctx.lineWidth = 1.2; ctx.lineCap = 'round';
     ctx.beginPath(); ctx.moveTo(4,-14); ctx.quadraticCurveTo(18,-8,20,2); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(8,4); ctx.quadraticCurveTo(22,8,18,18); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(14,-10); ctx.lineTo(28,-4); ctx.stroke();
-    // Center seam — drawn inside clip so it can't exit the body shape
-    ctx.strokeStyle = '#4080ff'; ctx.lineWidth = 2.5; ctx.lineCap = 'square';
+    ctx.strokeStyle = _cbAcc; ctx.lineWidth = 2.5; ctx.lineCap = 'square';
     ctx.beginPath(); ctx.moveTo(0,-22); ctx.lineTo(0,18); ctx.stroke();
     ctx.restore();
 
-    // Right eye overlay (drawn outside clip so full eye circle is replaced)
+    // Right eye overlay
     const cbEyeR = useSmallEyes ? 6 : 9;
     const cbEyeY = useSmallEyes ? -18 : -22;
-    ctx.fillStyle = '#001040';
+    ctx.fillStyle = _cbEye;
     ctx.beginPath(); ctx.arc(10,cbEyeY,cbEyeR,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#4080ff'; ctx.lineWidth = 2;
+    ctx.strokeStyle = _cbAcc; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(10,cbEyeY,cbEyeR,0,Math.PI*2); ctx.stroke();
-    ctx.fillStyle = '#80c0ff';
+    ctx.fillStyle = _cbGlow;
     ctx.beginPath(); ctx.arc(10,cbEyeY,cbEyeR*0.39,0,Math.PI*2); ctx.fill();
   }
 
@@ -1611,11 +1727,10 @@ function drawFrog() {
     const cpy    = (mouthY + tipY) / 2 + Math.cos(f.tongueAngle) * 12;
     ctx.save();
     if (equippedBundle === 'cyborg') {
-      ctx.strokeStyle = '#2060ff'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+      ctx.strokeStyle = getSkinProp('body'); ctx.lineWidth = 7; ctx.lineCap = 'round';
       ctx.beginPath(); ctx.moveTo(mouthX, mouthY);
       ctx.quadraticCurveTo(cpx, cpy, tipX, tipY); ctx.stroke();
-      // Dark blue accent lines
-      ctx.strokeStyle = '#001880'; ctx.lineWidth = 2;
+      ctx.strokeStyle = getSkinProp('eye'); ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(mouthX, mouthY);
       ctx.quadraticCurveTo(cpx, cpy, tipX, tipY); ctx.stroke();
     } else {
@@ -1623,7 +1738,7 @@ function drawFrog() {
       ctx.beginPath(); ctx.moveTo(mouthX, mouthY);
       ctx.quadraticCurveTo(cpx, cpy, tipX, tipY); ctx.stroke();
     }
-    ctx.fillStyle = equippedBundle === 'cyborg' ? '#4080ff' : '#b02878';
+    ctx.fillStyle = equippedBundle === 'cyborg' ? getSkinProp('body') : '#b02878';
     ctx.beginPath(); ctx.arc(tipX, tipY, 7, 0, Math.PI*2); ctx.fill();
     ctx.restore();
   }
@@ -1810,12 +1925,14 @@ function drawFrogPreview(cx, cy, sc, skinId, accId, bundleId) {
   const ac = accId    !== undefined ? accId    : equippedAccessory;
   const bd = bundleId !== undefined ? bundleId : equippedBundle;
   const sp = (prop) => getSkinProp(prop, sk);
-  // Back legs
+  // Back legs (right side skipped for cyborg)
   ctx.fillStyle = sp('leg');
   ctx.beginPath(); ctx.ellipse(-24, 6,13,10, 0.30,0,Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.ellipse(-21,18,11, 8, 0.08,0,Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.ellipse( 24, 6,13,10,-0.30,0,Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.ellipse( 21,18,11, 8,-0.08,0,Math.PI*2); ctx.fill();
+  if (bd !== 'cyborg') {
+    ctx.beginPath(); ctx.ellipse( 24, 6,13,10,-0.30,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( 21,18,11, 8,-0.08,0,Math.PI*2); ctx.fill();
+  }
   // Body
   ctx.fillStyle = sp('body');
   ctx.beginPath(); ctx.ellipse(0,-2,22,20,0,0,Math.PI*2); ctx.fill();
@@ -1857,17 +1974,20 @@ function drawFrogPreview(cx, cy, sc, skinId, accId, bundleId) {
   if (equippedAccessory2) drawAccessory(equippedAccessory2);
   // Cyborg bundle overlay
   if (bd === 'cyborg') {
-    // Right back legs — darker than arm
+    const _pAcc  = getSkinProp('body', sk);
+    const _pGlow = getSkinProp('belly', sk);
+    const _pEye  = getSkinProp('eye', sk);
+    // Right back legs
     ctx.fillStyle = '#0c0c18';
     ctx.beginPath(); ctx.ellipse(24,6,13,10,-0.30,0,Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.ellipse(21,18,11,8,-0.08,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#4080ff'; ctx.beginPath(); ctx.arc(24,6,2,0,Math.PI*2); ctx.fill();
-    // Right arm nub — slightly lighter than leg
+    ctx.fillStyle = _pAcc; ctx.beginPath(); ctx.arc(24,6,2,0,Math.PI*2); ctx.fill();
+    // Right arm nub
     ctx.fillStyle = '#1e1e2e';
     ctx.beginPath(); ctx.ellipse(17,9,9,7,0.30,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#4080ff'; ctx.beginPath(); ctx.arc(20,10,2,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = _pAcc; ctx.beginPath(); ctx.arc(20,10,2,0,Math.PI*2); ctx.fill();
 
-    // Right half of body — clipped to body ellipse, seam drawn INSIDE clip
+    // Right half of body
     ctx.save();
     ctx.beginPath();
     ctx.ellipse(0,-2,22,20,0,-Math.PI/2,Math.PI/2);
@@ -1875,21 +1995,19 @@ function drawFrogPreview(cx, cy, sc, skinId, accId, bundleId) {
     ctx.clip();
     ctx.fillStyle = '#2a2a3a';
     ctx.fillRect(-1,-30,30,55);
-    // Circuit lines
-    ctx.strokeStyle = '#4080ff'; ctx.lineWidth=1.2; ctx.lineCap='round';
+    ctx.strokeStyle = _pAcc; ctx.lineWidth=1.2; ctx.lineCap='round';
     ctx.beginPath(); ctx.moveTo(4,-12); ctx.quadraticCurveTo(16,-6,18,2); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(6,4); ctx.quadraticCurveTo(18,8,16,16); ctx.stroke();
-    // Seam line inside clip — can't exit body
-    ctx.strokeStyle = '#4080ff'; ctx.lineWidth=2; ctx.lineCap='square';
+    ctx.strokeStyle = _pAcc; ctx.lineWidth=2; ctx.lineCap='square';
     ctx.beginPath(); ctx.moveTo(0,-22); ctx.lineTo(0,18); ctx.stroke();
     ctx.restore();
 
     // Right eye → robotic
     const rer = useSmall ? 6 : 9;
     const reyY = useSmall ? -18 : -22;
-    ctx.fillStyle = '#001040'; ctx.beginPath(); ctx.arc(10,reyY,rer,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#4080ff'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(10,reyY,rer,0,Math.PI*2); ctx.stroke();
-    ctx.fillStyle = '#80c0ff'; ctx.beginPath(); ctx.arc(10,reyY,rer*0.39,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = _pEye; ctx.beginPath(); ctx.arc(10,reyY,rer,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle = _pAcc; ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(10,reyY,rer,0,Math.PI*2); ctx.stroke();
+    ctx.fillStyle = _pGlow; ctx.beginPath(); ctx.arc(10,reyY,rer*0.39,0,Math.PI*2); ctx.fill();
     ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(8,reyY-2,1.5,0,Math.PI*2); ctx.fill();
   }
   ctx.restore();
@@ -2028,6 +2146,9 @@ function takeDamage(type) {
   playDamage();
   if (lives <= 0) {
     lives = 0;
+    // Stop the event ambience and clear the event so it doesn't keep
+    // playing/rendering on the death screen and afterward in the menu.
+    if (currentEvent) endEvent();
     if (!secondChanceUsed && lilyPadsBalance >= 20) {
       // Player can buy second chance — defer actual death, show buy prompt
       // Set lives to 0 and flag gs='secondchance' temporarily via a flag
@@ -2261,6 +2382,7 @@ function endEvent() {
   stopEventAmbience();
   currentEvent = null;
   lavaBombs = [];
+  emberParts = []; steamParts = [];
 }
 
 function tickEvent() {
@@ -2268,10 +2390,7 @@ function tickEvent() {
   const now = Date.now();
   // Start event if time reached
   if (!currentEvent && now >= nextEventTime) {
-    const roll = Math.random();
-    if (roll < 0.15) startEvent('volcanic');
-    else if (roll < 0.57) startEvent('winter');
-    else startEvent('spring');
+    startEvent('spring');
   }
   // End event when time up
   if (currentEvent && now >= eventEndTime) { endEvent(); return; }
@@ -2280,7 +2399,7 @@ function tickEvent() {
     lavaSpawnTimer++;
     if (lavaSpawnTimer >= 180) { // spawn every 3 seconds
       lavaSpawnTimer = 0;
-      const vsx = volcanoX;
+      const vsx = camX + W - 110; // matches the always-visible volcano position
       const angle = -Math.PI * 0.5 + (Math.random() - 0.5) * 0.9;
       const spd = 6 + Math.random() * 4;
       lavaBombs.push({ x: vsx, y: PAD_BASE_Y - 150, vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd, alive: true, r: 8 });
@@ -2324,20 +2443,28 @@ function drawLavaBombs() {
 
 // ── Alligators ─────────────────────────────────
 function trySpawnGator() {
-  // Find a visible pad pair with a gap of 220–480px
+  // Find a visible pad pair with a gap of 220–480px and nothing else (e.g. a
+  // branch pad) sitting in that gap, so the gator only ever appears in open
+  // water strictly between two pads — never under or overlapping a pad.
   for (let i = curPad + 1; i < Math.min(curPad + 14, pads.length - 1); i++) {
-    const pL = pads[i], pR = pads[i + 1];
-    if (pL.st >= 2 || pR.st >= 2) continue;
-    const gap = pR.x - pL.x;
+    const pA = pads[i], pB = pads[i + 1];
+    if (pA.st >= 2 || pB.st >= 2) continue;
+    const left = pA.x <= pB.x ? pA : pB;
+    const right = pA.x <= pB.x ? pB : pA;
+    const gap = right.x - left.x;
     if (gap < 220 || gap > 480) continue;
-    const midX = (pL.x + pR.x) / 2;
-    const sxL = pL.x - camX, sxR = pR.x - camX;
+    const zoneL = left.x + left.w * 0.3;
+    const zoneR = right.x - right.w * 0.3;
+    // Make sure no other pad (e.g. a cluster's branch pad) falls inside the gap
+    const blocked = pads.some(p => p !== left && p !== right && p.x > zoneL && p.x < zoneR);
+    if (blocked) continue;
+    const midX = (left.x + right.x) / 2;
+    const sxL = left.x - camX, sxR = right.x - camX;
     if (sxL < 40 || sxR > W - 40) continue; // both pads must be visible
     if (gators.some(g => Math.abs(g.x - midX) < 250)) continue; // no crowding
     gators.push({
       x: midX,
-      zoneL: pL.x + pL.w * 0.3, // inner edge zone where detection triggers
-      zoneR: pR.x - pR.w * 0.3,
+      zoneL, zoneR, // inner edge zone where detection triggers
       phase: 'rising', timer: 0, lungeT: 0
     });
     return;
@@ -2644,6 +2771,7 @@ function startGame() {
   spawnGraceUntil = Date.now() + 1500;
   frogOnIce = false; frozenDamageTimer = 0;
   currentEvent = null; lavaBombs = []; lavaSpawnTimer = 0; snowParts = [];
+  emberParts = []; steamParts = []; dustParts = [];
   gators = []; gatorSpawnCooldown = 0;
   genLevel(); genBgPads(); genBugs(); parts = []; frogTrail = [];
   jumpBoostEnd = 0; speedBoostEnd = 0; padBoostEnd = 0;
@@ -3744,8 +3872,11 @@ C.addEventListener('touchstart', e => { e.preventDefault(); const [x, y] = canva
 C.addEventListener('touchend', e => { e.preventDefault(); release(); }, { passive: false });
 
 // ── Main loop ─────────────────────────────────
-function loop() {
+let _lastT = 0;
+function loop(ts) {
   requestAnimationFrame(loop);
+  if (ts - _lastT < 14.5) return; // cap at ~69fps (fixes 2× speed on 120Hz displays)
+  _lastT = ts;
   frame++; wv++; tod = (tod + TOD_SPEED) % 1;
   // Hard-reset all context state before every frame — prevents any leaked alpha,
   // transform, composite op, or shadow from a previous frame from darkening the scene
@@ -3867,10 +3998,20 @@ function loop() {
       }
     }
 
+    // Prevent the pads array from growing forever. Old pads behind the frog
+    // were never removed, so long sessions built up thousands of pads that
+    // got ticked/drawn every frame, tanking the framerate (and causing the
+    // landing-time stutter/"flashing"). Keep a generous buffer behind curPad
+    // and drop the rest. Skip while sinking so the saved padIdx stays valid.
+    if (curPad > 40 && !frog.sinking) {
+      const drop = curPad - 20;
+      pads.splice(0, drop);
+      curPad -= drop;
+    }
+
     // Draw world — reset globalAlpha before each draw step to prevent any alpha leak
     ctx.globalAlpha = 1; drawBgPads();
     ctx.globalAlpha = 1; pads.forEach(drawPad);
-    if (currentEvent === 'volcanic') { ctx.globalAlpha = 1; drawLavaBombs(); }
     ctx.globalAlpha = 1; drawBugs();
     ctx.globalAlpha = 1; tickParts();
     ctx.globalAlpha = 1; drawGators();
