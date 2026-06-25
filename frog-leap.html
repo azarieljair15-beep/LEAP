@@ -412,8 +412,6 @@ let bugs = [];
 let jumpBoostEnd = 0, speedBoostEnd = 0, padBoostEnd = 0;
 let cursorWX = 0, cursorWY = 0;
 let tod = 0.32;
-let bgCamX = 0;
-let lilyPadCamX = 0;
 
 // ── Lives ─────────────────────────────────────
 let lives = 3;
@@ -1089,8 +1087,8 @@ function drawBG() {
   }
 
   // ── Background parallax shift ─────────────────
-  const bgShift = -bgCamX;
-  const lilyBgShift = -lilyPadCamX;
+  const bgShift = -camX;
+  const lilyBgShift = -camX;
 
   // ── Far cypress treeline (two depth layers) ──
   // Far layer — shorter, desaturated
@@ -3932,12 +3930,6 @@ function loop(ts) {
   if (ts - _lastT < 14.5) return; // cap at ~69fps (fixes 2× speed on 120Hz displays)
   _lastT = ts;
   frame++; wv++; tod = (tod + TOD_SPEED) % 1;
-  if (frog && !frog.grounded) {
-    bgCamX += (camX - bgCamX) * 0.10;
-    lilyPadCamX += (bgCamX - lilyPadCamX) * 0.30;
-  } else {
-    bgCamX += 0.25;
-  }
   // Hard-reset all context state before every frame — prevents any leaked alpha,
   // transform, composite op, or shadow from a previous frame from darkening the scene
   ctx.globalAlpha = 1;
