@@ -1200,6 +1200,19 @@ function drawBG() {
   wg.addColorStop(1,   rgb(waterBot));
   ctx.fillStyle = wg; ctx.fillRect(0, HORIZON, W, H - HORIZON);
 
+  // ── Algae surface patches ─────────────────────
+  if (currentEvent !== 'winter' && currentEvent !== 'volcanic') {
+    ctx.save();
+    for (let i = 0; i < ALGAE_PATCHES.length; i++) {
+      const a = ALGAE_PATCHES[i];
+      const ax = ((a.x + bgShift) % (W + 300) + W + 300) % (W + 300) - 100;
+      ctx.globalAlpha = a.alpha * (currentEvent === 'spring' ? 1.3 : 1);
+      ctx.fillStyle = a.col;
+      ctx.beginPath(); ctx.ellipse(ax, a.y, a.rx, a.ry, a.rot, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
 
   // ── Ground mist / fog layers ─────────────────
   if (currentEvent !== 'volcanic') {
@@ -1279,7 +1292,8 @@ function drawBG() {
       const bl = BG_LILY_PADS[i];
       // Slow parallax drift (closer to bg = slower)
       const _range = W + bl.r * 3 + 360;
-      const bsx = ((bl.x - camX) % _range + _range) % _range - bl.r * 1.5;
+      const frogCamX = frog ? frog.x - 170 : camX;
+      const bsx = ((bl.x - frogCamX) % _range + _range) % _range - bl.r * 1.5;
       ctx.globalAlpha = 1;
       // Shadow
       ctx.fillStyle = 'rgba(0,0,0,0.28)';
