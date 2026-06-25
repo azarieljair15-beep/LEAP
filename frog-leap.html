@@ -3934,7 +3934,7 @@ function loop(ts) {
   frame++; wv++; tod = (tod + TOD_SPEED) % 1;
   if (frog && !frog.grounded) {
     bgCamX += (camX - bgCamX) * 0.10;
-    lilyPadCamX += (camX - lilyPadCamX) * 0.10;
+    lilyPadCamX += (bgCamX - lilyPadCamX) * 0.30;
   } else {
     bgCamX += 0.25;
   }
