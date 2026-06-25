@@ -445,6 +445,7 @@ let snowParts = [];
 let emberParts = [];   // floating fire embers in the sky (volcanic event)
 let steamParts = [];   // steam wisps rising off the water (volcanic event)
 let dustParts = [];    // tiny ambient dust motes drifting on the wind (always)
+let sinkGraceUntil = 0; // frame until sink damage is delayed (charging grace)
 let clouds = [];       // sky clouds — jumpable, grant charge boost
 let chargeBoost = 0;   // extra charge limit from cloud bounce (0..1.5)
 let nextCloudSpawn = 0;// frame counter until next cloud spawns
@@ -2959,7 +2960,7 @@ function startGame() {
   score = 0; isNewBest = false; frame = 0; wv = 0;
   holding = false; curPad = 0;
   lives = 3; invincibleUntil = 0; lastDamageType = null; heartRegenTimer = 0;
-  clouds = []; chargeBoost = 0; nextCloudSpawn = 300;
+  clouds = []; chargeBoost = 0; nextCloudSpawn = 300; sinkGraceUntil = 0;
   secondChanceUsed = false;
   spawnGraceUntil = Date.now() + 1500;
   frogOnIce = false; frozenDamageTimer = 0;
@@ -4430,8 +4431,18 @@ function loop(ts) {
     // Sunk pad death — trigger when pad starts sinking (st=2), not after fully sunken
     if (frog.grounded && !frog.onIce && curPad >= 0 && pads[curPad].st >= 2) {
       if (frame >= invincibleUntil) {
-        takeDamage('sink');
+        // If charging, grant 0.3s grace so player can launch to safety
+        if (frog.charging && sinkGraceUntil === 0) {
+          sinkGraceUntil = frame + Math.round(0.3 * 69);
+        }
+        if (!frog.charging) sinkGraceUntil = 0;
+        if (sinkGraceUntil === 0 || frame >= sinkGraceUntil) {
+          sinkGraceUntil = 0;
+          takeDamage('sink');
+        }
       }
+    } else {
+      sinkGraceUntil = 0;
     }
 
     // Water hit (missed all pads)
