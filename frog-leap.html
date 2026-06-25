@@ -413,6 +413,7 @@ let jumpBoostEnd = 0, speedBoostEnd = 0, padBoostEnd = 0;
 let cursorWX = 0, cursorWY = 0;
 let tod = 0.32;
 let frozenCamX = 0;
+let lilyScroll = 0; // bg lily pad scroll — advances only while frog is airborne
 
 // ── Lives ─────────────────────────────────────
 let lives = 3;
@@ -1089,7 +1090,6 @@ function drawBG() {
 
   // ── Background parallax shift ─────────────────
   const bgShift = -camX / 3;
-  if (frog && !frog.grounded) frozenCamX = camX;
 
   // ── Far cypress treeline (two depth layers) ──
   // Far layer — shorter, desaturated
@@ -1292,8 +1292,7 @@ function drawBG() {
       const bl = BG_LILY_PADS[i];
       // Slow parallax drift (closer to bg = slower)
       const _range = W + bl.r * 3 + 360;
-      const frogCamX = frog ? frog.x - 170 : camX;
-      const bsx = ((bl.x - frogCamX) % _range + _range) % _range - bl.r * 1.5;
+      const bsx = ((bl.x - lilyScroll) % _range + _range) % _range - bl.r * 1.5;
       ctx.globalAlpha = 1;
       // Shadow
       ctx.fillStyle = 'rgba(0,0,0,0.28)';
@@ -2808,6 +2807,7 @@ function startGame() {
   frog = makeFrog(pads[0].x, pads[0].y - 23);
   camX = frog.x - 170;
   frozenCamX = camX;
+  lilyScroll = 0;
   // Schedule first event 2-4 minutes in
   gameStartTime = Date.now();
   nextEventTime = gameStartTime + 60 * 1000;
@@ -3937,6 +3937,9 @@ function loop(ts) {
     if (currentEvent !== 'winter') bgPads.forEach(bp => { bp.x -= PAD_DRIFT * 0.5; });
     const prevFrogY = frog ? frog.y : 0;
     frogTick();
+    // Bg lily pads scroll only while the frog is actually airborne (a real leap),
+    // and freeze when it's parked on a pad — matches the frog's forward motion.
+    if (frog && !frog.grounded && !frog.dead) lilyScroll += frog.vx + PAD_DRIFT;
     tickBugs();
     tickEvent();
     camX += (frog.x - 170 - camX) * 0.07;
