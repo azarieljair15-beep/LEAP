@@ -1089,7 +1089,7 @@ function drawBG() {
 
   // ── Background parallax shift ─────────────────
   const bgShift = -camX;
-  if (frog && !frog.grounded) frozenCamX = camX;
+  if (frog && !frog.grounded) frozenCamX += (camX - frozenCamX) * 0.12;
   const lilyBgShift = -frozenCamX;
 
   // ── Far cypress treeline (two depth layers) ──
