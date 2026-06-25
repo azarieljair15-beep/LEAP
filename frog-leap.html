@@ -451,10 +451,10 @@ let lightningTimer = 0;// frames until next lightning strike (monsoon)
 // ── Menu / Settings ───────────────────────────
 let menuPage = 'main';
 let menuQuoteIdx = 0;
-let sfxOn = true, ambienceOn = true;
+let sfxOn = true, ambienceOn = true, musicOn = true;
 let reducedFlashes = false; // dampen lightning flashes (photosensitivity)
 // UI accent colour — themeable from Settings
-const UI_COLORS = ['#3de83d','#40c8ff','#b070ff','#ff8030','#ff5fa0','#ffd23d'];
+const UI_COLORS = ['#3de83d','#40c8ff','#b070ff','#ff8030','#ff5fa0','#ffd23d','#e83030'];
 let uiColor = '#3de83d';
 // Darken/brighten a #rrggbb hex by factor (0=black, 1=same, >1 brighter)
 function shade(hex, f) {
@@ -526,7 +526,7 @@ function saveProgress() {
       best, lilyPadsTotal, lilyPadsBalance,
       equippedSkin, equippedAccessory, equippedAccessory2, equippedTrail,
       equippedBundle, ownedAccessories, ownedTrails, ownedBundles, gamesWon, WIN,
-      uiColor, reducedFlashes, sfxOn, ambienceOn
+      uiColor, reducedFlashes, sfxOn, ambienceOn, musicOn
     }));
   } catch(e) {}
   scheduleCloudSync();
@@ -552,6 +552,7 @@ function loadProgress() {
     if (typeof d.reducedFlashes === 'boolean') reducedFlashes = d.reducedFlashes;
     if (typeof d.sfxOn === 'boolean') sfxOn = d.sfxOn;
     if (typeof d.ambienceOn === 'boolean') ambienceOn = d.ambienceOn;
+    if (typeof d.musicOn === 'boolean') musicOn = d.musicOn;
   } catch(e) {}
 }
 loadProgress();
@@ -598,36 +599,85 @@ function resumeAC() {
 }
 function startMenuMusic() {
   if (menuMusicPlaying) return;
+  if (!musicOn) return;
   menuMusicPlaying = true;
   try {
     menuMusicAC = new (window.AudioContext || window.webkitAudioContext)();
     const ac = menuMusicAC;
-    const masterGain = ac.createGain(); masterGain.gain.value = 0.10; masterGain.connect(ac.destination);
-    // Gentle pad chords — cycle through Cm pentatonic: C3, Eb3, G3, Bb3, C4
-    const NOTES = [130.81, 155.56, 196.00, 233.08, 261.63, 196.00, 155.56, 130.81];
-    let noteIdx = 0;
-    function playPadNote() {
+    // Master chain: compressor → reverb → master gain
+    const master = ac.createGain(); master.gain.value = 0.18; master.connect(ac.destination);
+    const comp = ac.createDynamicsCompressor(); comp.threshold.value = -18; comp.ratio.value = 4; comp.connect(master);
+    // Reverb via convolver (impulse synthesis)
+    const convLen = ac.sampleRate * 2.8;
+    const convBuf = ac.createBuffer(2, convLen, ac.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = convBuf.getChannelData(ch);
+      for (let i = 0; i < convLen; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / convLen, 2.4);
+    }
+    const rev = ac.createConvolver(); rev.buffer = convBuf;
+    const revGain = ac.createGain(); revGain.gain.value = 0.42;
+    rev.connect(revGain); revGain.connect(comp);
+    const dry = ac.createGain(); dry.gain.value = 0.58; dry.connect(comp);
+
+    // Deep swamp bass drone — open 5th (G1 + D2)
+    [[49.00, 0.22], [73.42, 0.12]].forEach(([f, v]) => {
+      const o = ac.createOscillator(); o.type = 'sine'; o.frequency.value = f;
+      const g = ac.createGain(); g.gain.value = v;
+      o.connect(g); g.connect(dry); o.start();
+    });
+
+    // Slow LFO-modulated pad — Gm7 voicing (G2, Bb2, D3, F3)
+    const PAD_FREQS = [98.00, 116.54, 146.83, 174.61];
+    PAD_FREQS.forEach((f, i) => {
+      const o = ac.createOscillator(); o.type = 'sine'; o.frequency.value = f;
+      const o2 = ac.createOscillator(); o2.type = 'sine'; o2.frequency.value = f * 2.002; // slight detune
+      const lfo = ac.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 0.07 + i * 0.013;
+      const lfoG = ac.createGain(); lfoG.gain.value = 0.08;
+      lfo.connect(lfoG); lfoG.connect(o.frequency);
+      const g = ac.createGain(); g.gain.value = 0.12;
+      o.connect(g); o2.connect(g);
+      g.connect(dry); g.connect(rev);
+      o.start(); o2.start(); lfo.start();
+    });
+
+    // Melodic swamp pluck loop — pentatonic minor (G C D Eb F)
+    const MELODY = [98.00, 130.81, 146.83, 155.56, 174.61, 196.00, 261.63, 196.00, 174.61, 146.83, 130.81, 98.00];
+    let mi = 0;
+    function pluck() {
       if (!menuMusicAC || menuMusicAC.state === 'closed') return;
       const t = ac.currentTime;
-      const freq = NOTES[noteIdx % NOTES.length]; noteIdx++;
-      // Soft sine pad with slow attack/release
-      const osc = ac.createOscillator(); osc.type = 'sine'; osc.frequency.value = freq;
-      const osc2 = ac.createOscillator(); osc2.type = 'sine'; osc2.frequency.value = freq * 1.5;
+      const freq = MELODY[mi % MELODY.length]; mi++;
+      // Triangle + sine layered pluck
+      [freq, freq * 2].forEach((f, li) => {
+        const o = ac.createOscillator(); o.type = li === 0 ? 'triangle' : 'sine'; o.frequency.value = f;
+        const g = ac.createGain();
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(li === 0 ? 0.28 : 0.10, t + 0.04);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 1.6);
+        o.connect(g); g.connect(dry); g.connect(rev);
+        o.start(t); o.stop(t + 1.8);
+      });
+      // Occasionally double notes for interest
+      const gap = mi % 4 === 0 ? 400 : (800 + Math.random() * 600);
+      setTimeout(pluck, gap);
+    }
+    setTimeout(pluck, 600);
+
+    // Crickets/frog ambience layer — random high chirps
+    function chirpLayer() {
+      if (!menuMusicAC || menuMusicAC.state === 'closed') return;
+      const t = ac.currentTime;
+      const f = 2200 + Math.random() * 1800;
+      const o = ac.createOscillator(); o.type = 'sine'; o.frequency.value = f;
       const g = ac.createGain();
       g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.55, t + 1.2);
-      g.gain.setValueAtTime(0.55, t + 1.8);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 3.2);
-      osc.connect(g); osc2.connect(g); g.connect(masterGain);
-      osc.start(t); osc.stop(t + 3.5);
-      osc2.start(t); osc2.stop(t + 3.5);
-      setTimeout(playPadNote, 1600 + Math.random() * 800);
+      g.gain.linearRampToValueAtTime(0.022, t + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+      o.connect(g); g.connect(dry);
+      o.start(t); o.stop(t + 0.06);
+      setTimeout(chirpLayer, 180 + Math.random() * 700);
     }
-    playPadNote();
-    // Slow bass drone
-    const bass = ac.createOscillator(); bass.type = 'sine'; bass.frequency.value = 65.41;
-    const bassG = ac.createGain(); bassG.gain.value = 0.35;
-    bass.connect(bassG); bassG.connect(masterGain); bass.start();
+    setTimeout(chirpLayer, 1200);
   } catch(e) {}
 }
 function stopMenuMusic() {
@@ -2370,10 +2420,10 @@ function thunderClap() {
 
 function startEvent(type) {
   currentEvent = type;
-  const dur = 75 * 1000; // 75 seconds
+  const dur = 50 * 1000; // 50 seconds
   eventEndTime = Date.now() + dur;
   // Schedule next event 1-2 minutes after this one ends
-  const cooldown = 60 * 1000;
+  const cooldown = 45 * 1000;
   nextEventTime = eventEndTime + cooldown;
   if (type === 'spring') {
     startSpringAmbience();
@@ -2846,7 +2896,7 @@ function startGame() {
   rainParts = []; lightningFlash = 0; lightningTimer = 0;
   // Schedule first event 2-4 minutes in
   gameStartTime = Date.now();
-  nextEventTime = gameStartTime + 60 * 1000;
+  nextEventTime = gameStartTime + 45 * 1000;
   gs = 'play';
 }
 
@@ -3378,21 +3428,25 @@ function drawMenu() {
     ctx.beginPath(); ctx.moveTo(40, 82); ctx.lineTo(W - 40, 82); ctx.stroke();
     ctx.textAlign = 'left';
     // Sound Effects
-    ctx.fillStyle = '#cccccc'; ctx.font = '17px Arial'; ctx.fillText('Sound Effects', 52, 124);
-    ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText('Jumps, landing, splashes', 52, 144);
-    drawToggle(W - 100, 112, sfxOn);
+    ctx.fillStyle = '#cccccc'; ctx.font = '17px Arial'; ctx.fillText('Sound Effects', 52, 108);
+    ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText('Jumps, landing, splashes', 52, 126);
+    drawToggle(W - 100, 96, sfxOn);
     // Ambience
-    ctx.fillStyle = '#cccccc'; ctx.font = '17px Arial'; ctx.fillText('Ambience', 52, 184);
-    ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText('Wind, crickets, rain, birds', 52, 204);
-    drawToggle(W - 100, 172, ambienceOn);
+    ctx.fillStyle = '#cccccc'; ctx.font = '17px Arial'; ctx.fillText('Ambience', 52, 158);
+    ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText('Wind, crickets, rain, birds', 52, 176);
+    drawToggle(W - 100, 146, ambienceOn);
+    // Music
+    ctx.fillStyle = '#cccccc'; ctx.font = '17px Arial'; ctx.fillText('Menu Music', 52, 208);
+    ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText('Ambient music on intro & menu', 52, 226);
+    drawToggle(W - 100, 196, musicOn);
     // Reduced Flashes
-    ctx.fillStyle = '#cccccc'; ctx.font = '17px Arial'; ctx.fillText('Reduced Flashes', 52, 244);
-    ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText('Dim the monsoon lightning', 52, 264);
-    drawToggle(W - 100, 232, reducedFlashes);
+    ctx.fillStyle = '#cccccc'; ctx.font = '17px Arial'; ctx.fillText('Reduced Flashes', 52, 258);
+    ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText('Dim the monsoon lightning', 52, 276);
+    drawToggle(W - 100, 246, reducedFlashes);
     // UI Main Colour
-    ctx.fillStyle = '#cccccc'; ctx.font = '17px Arial'; ctx.fillText('UI Main Color', 52, 304);
-    ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText('Logo, buttons & HUD accent', 52, 324);
-    const swY = 338, swW = 30, swGap = 8, swN = UI_COLORS.length;
+    ctx.fillStyle = '#cccccc'; ctx.font = '17px Arial'; ctx.fillText('UI Main Color', 52, 306);
+    ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText('Logo, buttons & HUD accent', 52, 322);
+    const swY = 336, swW = 28, swGap = 7, swN = UI_COLORS.length;
     const swX0 = W/2 - (swN * swW + (swN - 1) * swGap) / 2;
     for (let i = 0; i < swN; i++) {
       const x = swX0 + i * (swW + swGap);
@@ -3405,24 +3459,24 @@ function drawMenu() {
     }
     // BACK
     ctx.fillStyle = shade(uiColor, 0.3);
-    ctx.beginPath(); ctx.roundRect(W/2-70, 398, 140, 44, 22); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(W/2-70, 382, 140, 40, 20); ctx.fill();
     ctx.fillStyle = shade(uiColor, 1.0); ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center';
-    ctx.fillText('BACK', W/2, 426);
+    ctx.fillText('BACK', W/2, 407);
     // Account row
     if (currentUser) {
       ctx.fillStyle = '#3a7a3a'; ctx.font = '12px Arial';
-      ctx.fillText('@' + currentUser.username, W/2, 470);
+      ctx.fillText('@' + currentUser.username, W/2, 444);
       ctx.fillStyle = '#2a0a0a';
-      ctx.beginPath(); ctx.roundRect(W/2-60, 480, 120, 34, 17); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(W/2-60, 452, 120, 34, 17); ctx.fill();
       ctx.fillStyle = '#cc5555'; ctx.font = 'bold 13px Arial';
-      ctx.fillText('LOG OUT', W/2, 502);
+      ctx.fillText('LOG OUT', W/2, 474);
     } else {
       ctx.fillStyle = '#556655'; ctx.font = '12px Arial';
-      ctx.fillText('Playing as guest', W/2, 470);
+      ctx.fillText('Playing as guest', W/2, 444);
       ctx.fillStyle = '#0a1a0a';
-      ctx.beginPath(); ctx.roundRect(W/2-60, 480, 120, 34, 17); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(W/2-60, 452, 120, 34, 17); ctx.fill();
       ctx.fillStyle = '#5ac85a'; ctx.font = 'bold 13px Arial';
-      ctx.fillText('SIGN IN', W/2, 502);
+      ctx.fillText('SIGN IN', W/2, 474);
     }
     ctx.textAlign = 'left';
   }
@@ -4037,13 +4091,13 @@ function press(px = W/2, py = H/2) {
       return;
 
     } else {
-      if (inRect(px, py, 0, 102, W, 56)) { sfxOn = !sfxOn; saveProgress(); return; }
-      if (inRect(px, py, 0, 162, W, 56)) {
+      if (inRect(px, py, 0, 84, W, 52)) { sfxOn = !sfxOn; saveProgress(); return; }
+      if (inRect(px, py, 0, 134, W, 52)) {
         ambienceOn = !ambienceOn;
         if (ambienceOn) {
           resumeAC();
           if (!ambiStarted) startAmbience();
-          if (currentEvent) startEvent(currentEvent); // restart event ambience
+          if (currentEvent) startEvent(currentEvent);
         } else {
           if (AmbiAC) AmbiAC.suspend();
           stopEventAmbience();
@@ -4051,16 +4105,22 @@ function press(px = W/2, py = H/2) {
         saveProgress();
         return;
       }
-      if (inRect(px, py, 0, 222, W, 56)) { reducedFlashes = !reducedFlashes; saveProgress(); return; }
+      if (inRect(px, py, 0, 184, W, 52)) {
+        musicOn = !musicOn;
+        if (musicOn) startMenuMusic(); else stopMenuMusic();
+        saveProgress();
+        return;
+      }
+      if (inRect(px, py, 0, 234, W, 52)) { reducedFlashes = !reducedFlashes; saveProgress(); return; }
       // UI colour swatches
-      const swY = 338, swW = 30, swGap = 8, swN = UI_COLORS.length;
+      const swY = 336, swW = 28, swGap = 7, swN = UI_COLORS.length;
       const swX0 = W/2 - (swN * swW + (swN - 1) * swGap) / 2;
       for (let i = 0; i < swN; i++) {
         const x = swX0 + i * (swW + swGap);
         if (inRect(px, py, x - 2, swY - 2, swW + 6, swW + 6)) { uiColor = UI_COLORS[i]; saveProgress(); return; }
       }
-      if (inRect(px, py, W/2-70, 398, 140, 44)) { menuPage = 'main'; return; }
-      if (inRect(px, py, W/2-60, 480, 120, 34)) {
+      if (inRect(px, py, W/2-70, 382, 140, 40)) { menuPage = 'main'; return; }
+      if (inRect(px, py, W/2-60, 460, 120, 34)) {
         if (currentUser) { doLogout(); } else { showAuthOverlay(); }
         return;
       }
