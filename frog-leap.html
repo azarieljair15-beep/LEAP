@@ -446,9 +446,6 @@ let emberParts = [];   // floating fire embers in the sky (volcanic event)
 let steamParts = [];   // steam wisps rising off the water (volcanic event)
 let dustParts = [];    // tiny ambient dust motes drifting on the wind (always)
 let sinkGraceUntil = 0; // frame until sink damage is delayed (charging grace)
-let clouds = [];       // sky clouds — jumpable, grant charge boost
-let chargeBoost = 0;   // extra charge limit from cloud bounce (0..1.5)
-let nextCloudSpawn = 0;// frame counter until next cloud spawns
 let rainParts = [];    // heavy rain streaks (monsoon event)
 let lightningFlash = 0;// 0..1 screen flash intensity from lightning, decays each frame
 let lightningTimer = 0;// frames until next lightning strike (monsoon)
@@ -1443,34 +1440,6 @@ function padTimeLeft(p) {
   const wt = padWarnT();
   if (p.st === 0) return wt; if (p.st === 1) return Math.max(0, wt - p.t); return 0;
 }
-function spawnCloud() {
-  clouds.push({
-    x: 60 + Math.random() * (W - 120),
-    y: HORIZON - 55 - Math.random() * 110,
-    r: 28 + Math.random() * 22,
-    vx: (Math.random() - 0.5) * 0.35,
-    used: false,
-    fadeAlpha: 1,
-  });
-}
-function drawCloud(c) {
-  const al = c.used ? c.fadeAlpha : 0.90;
-  if (al <= 0.01) return;
-  ctx.save(); ctx.globalAlpha = al;
-  const x = c.x, y = c.y, r = c.r;
-  ctx.fillStyle = '#ddeeff';
-  ctx.beginPath(); ctx.arc(x,          y,          r * 0.60, 0, Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(x - r*0.44, y + r*0.18, r * 0.46, 0, Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(x + r*0.44, y + r*0.18, r * 0.46, 0, Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(x - r*0.18, y + r*0.08, r * 0.52, 0, Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(x + r*0.22, y + r*0.04, r * 0.44, 0, Math.PI*2); ctx.fill();
-  // Shimmer on fresh cloud
-  if (!c.used) {
-    ctx.fillStyle = `rgba(255,255,200,${0.55 + Math.sin(wv*0.08 + c.x * 0.05) * 0.35})`;
-    ctx.beginPath(); ctx.arc(x + r*0.1, y - r*0.52, 3.5, 0, Math.PI*2); ctx.fill();
-  }
-  ctx.restore();
-}
 function drawPad(p) {
   const sx = p.x - camX;
   if (sx < -150 || sx > W + 150) return;
@@ -1807,20 +1776,12 @@ function drawFrog() {
     const bw = 54, bh = 9;
     const bx = sx - bw/2, by = sy - 20 * f.sqY - 30;
     ctx.fillStyle = 'rgba(0,0,0,0.65)';
-    const totalMax = 1 + chargeBoost;
-    const barW = chargeBoost > 0 ? bw * (totalMax / 1.5) : bw; // widen bar when boosted
-    ctx.beginPath(); ctx.roundRect(bx-2, by-2, barW+4, bh+4, 4); ctx.fill();
-    [[0, 0.35, '#c83030'], [0.35, 0.70, '#30b830'], [0.70, 1.0, '#c83030']].forEach(([s, e, col]) => {
-      ctx.fillStyle = col; ctx.fillRect(bx + s*barW, by, (e-s)*barW, bh);
+    ctx.beginPath(); ctx.roundRect(bx-2, by-2, bw+4, bh+4, 4); ctx.fill();
+    [[0, 0.35, '#c83030'], [0.35, 0.70, '#30b830'], [0.70, 1, '#c83030']].forEach(([s, e, col]) => {
+      ctx.fillStyle = col; ctx.fillRect(bx + s*bw, by, (e-s)*bw, bh);
     });
-    // Boost zone — extra bar section shown in cloud-blue
-    if (chargeBoost > 0) {
-      ctx.fillStyle = '#60ccff';
-      ctx.fillRect(bx + barW * (1/totalMax), by, barW * (chargeBoost/totalMax), bh);
-    }
-    const fillW = (f.charge / totalMax) * barW;
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(bx + fillW, by, barW - fillW, bh);
+    ctx.fillRect(bx + f.charge*bw, by, bw*(1-f.charge), bh);
     ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1.5;
     ctx.strokeRect(bx + 0.35*bw, by-1, 0.35*bw, bh+2);
     ctx.fillStyle = '#bbb'; ctx.font = '9px Arial';
@@ -2119,7 +2080,7 @@ function frogTick() {
     f.rot += (-f.rot) * 0.12;
     if (f.charging) {
       const prevCharge = f.charge;
-      f.charge = Math.min(1 + chargeBoost, f.charge + 0.012);
+      f.charge = Math.min(1, f.charge + 0.012);
       if (equippedBundle === 'cyborg' && prevCharge < 0.5 && f.charge >= 0.5) playCyborgCharge();
     }
     // Cancel balance if in a restricted context
@@ -2960,7 +2921,7 @@ function startGame() {
   score = 0; isNewBest = false; frame = 0; wv = 0;
   holding = false; curPad = 0;
   lives = 3; invincibleUntil = 0; lastDamageType = null; heartRegenTimer = 0;
-  clouds = []; chargeBoost = 0; nextCloudSpawn = 300; sinkGraceUntil = 0;
+  sinkGraceUntil = 0;
   secondChanceUsed = false;
   spawnGraceUntil = Date.now() + 1500;
   frogOnIce = false; frozenDamageTimer = 0;
@@ -3050,6 +3011,24 @@ function drawHUD() {
     ctx.fillStyle = '#ff9030'; ctx.font = 'bold 11px Arial';
     ctx.fillText('⚡ SPEED BOOST  ' + secs + 's', 20, boostY + 17);
     boostY += 30;
+  }
+
+  // Mobile Balance button — only on touch devices
+  if (navigator.maxTouchPoints > 0 && frog && !frog.dead && gs === 'play') {
+    const canBalance = frog.grounded && curPad !== 0 && !(frame < invincibleUntil && lives < 3);
+    const btnX = W - 70, btnY = H - 70, btnR = 34;
+    ctx.save();
+    ctx.globalAlpha = canBalance ? 0.82 : 0.35;
+    ctx.fillStyle = frog.balancing ? shade(uiColor, 0.55) : 'rgba(0,0,0,0.55)';
+    ctx.beginPath(); ctx.arc(btnX, btnY, btnR, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = frog.balancing ? shade(uiColor, 1.1) : 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(btnX, btnY, btnR, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle = frog.balancing ? shade(uiColor, 1.3) : '#fff';
+    ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
+    ctx.fillText('BALANCE', btnX, btnY + 4);
+    ctx.restore();
+    ctx.textAlign = 'left';
   }
 
   // Balance bar
@@ -4291,8 +4270,24 @@ C.addEventListener('mouseup', release);
 C.addEventListener('mousemove', e => { const [x, y] = canvasXY(e); cursorWX = x + camX; cursorWY = y; });
 C.addEventListener('touchstart', e => {
   e.preventDefault();
+  if (gs === 'play' && frog && e.touches.length === 1) {
+    const [x, y] = canvasXY(e);
+    // Balance button hit test (bottom-right circle)
+    const btnX = W - 70, btnY = H - 70, btnR = 34;
+    if (Math.hypot(x - btnX, y - btnY) <= btnR) {
+      const f = frog;
+      const canBalance = f.grounded && !f.dead && curPad !== 0 && !(frame < invincibleUntil && lives < 3);
+      if (canBalance) {
+        f.balancing = !f.balancing;
+        if (f.balancing) { f.charging = false; f.charge = 0; }
+        else f.balanceT = 0;
+      }
+      return;
+    }
+    press(x, y); return;
+  }
   if (e.touches.length >= 2 && gs === 'play' && frog) {
-    // Two-finger tap = balance toggle on mobile
+    // Two-finger tap still works as fallback
     const f = frog;
     const canBalance = f.grounded && !f.dead && curPad !== 0 && !(frame < invincibleUntil && lives < 3);
     if (canBalance) {
@@ -4350,39 +4345,6 @@ function loop(ts) {
     tickEvent();
     camX += (frog.x - 170 - camX) * 0.07;
 
-    // Cloud spawn & tick
-    nextCloudSpawn--;
-    if (nextCloudSpawn <= 0) {
-      if (clouds.length < 5) spawnCloud();
-      nextCloudSpawn = 380 + Math.floor(Math.random() * 200); // ~6-9s
-    }
-    for (let ci = clouds.length - 1; ci >= 0; ci--) {
-      const c = clouds[ci];
-      c.x += c.vx;
-      if (c.x < -80) c.x = W + 80;
-      if (c.x > W + 80) c.x = -80;
-      if (c.used) {
-        c.fadeAlpha -= 0.012;
-        if (c.fadeAlpha <= 0) { clouds.splice(ci, 1); continue; }
-      }
-    }
-    // Cloud collision — frog hits cloud from below while falling
-    if (!frog.grounded && !frog.dead && frog.vy > 0) {
-      const fsx = frog.x - camX;
-      for (let ci = 0; ci < clouds.length; ci++) {
-        const c = clouds[ci];
-        if (c.used) continue;
-        if (Math.abs(fsx - c.x) <= c.r * 0.85 &&
-            frog.y >= c.y - 10 && prevFrogY <= c.y + 8) {
-          chargeBoost = Math.min(1.5, chargeBoost + 0.45);
-          c.used = true; c.fadeAlpha = 1;
-          frog.vy = -3.5; // small bounce so you keep moving
-          spark(frog.x, frog.y, 'land');
-          break;
-        }
-      }
-    }
-
     // Trail update
     if (equippedTrail || equippedBundle === 'cyborg') {
       frogTrail.push({ x: frog.x, y: frog.y });
@@ -4402,7 +4364,6 @@ function loop(ts) {
           frog.alpha = 1;
           frog.sqY = 0.82; frog.sqX = 1.12;
           frog.y = p.y - 23; frog.onIce = false;
-          chargeBoost = 0;
           curPad = i; score++;
           const padMult = Date.now() < padBoostEnd ? 2 : 1;
           lilyPadsTotal += padMult; lilyPadsBalance += padMult;
@@ -4488,7 +4449,6 @@ function loop(ts) {
     }
 
     // Draw world — reset globalAlpha before each draw step to prevent any alpha leak
-    ctx.globalAlpha = 1; clouds.forEach(drawCloud);
     ctx.globalAlpha = 1; pads.forEach(drawPad);
     ctx.globalAlpha = 1; drawBugs();
     ctx.globalAlpha = 1; tickParts();
